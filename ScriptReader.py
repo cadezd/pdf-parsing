@@ -10,11 +10,8 @@ class ScriptReader:
         self._from: int = _from
         self._to: int = _to
 
-        if self._from > self._to:
-            raise ValueError('From must be less than to')
-
-        self.XML_FILTER = re.compile('DezelniZborKranjski-[0-9]{8}-[0-9]{2}-[0-9]{2}\\.tei\\.xml')
-        self.PDF_FILTER = re.compile('DezelniZborKranjski-[0-9]{8}-[0-9]{2}-[0-9]{2}\\.pdf')
+        self.XML_FILTER = re.compile('DezelniZborKranjski-[0-9]{8}-[0-9]{2}(p[0-9])?-[0-9]{2}\\.tei\\.xml')
+        self.PDF_FILTER = re.compile('DezelniZborKranjski-[0-9]{8}-[0-9]{2}(p[0-9])?-[0-9]{2}\\.pdf')
 
     def group_xml_pdf(self) -> list[tuple[str, str]]:
         """
@@ -35,6 +32,14 @@ class ScriptReader:
         elif self._from != -1 and self._to != -1:
             xml_files = xml_files[self._from:self._to]
             pdf_files = pdf_files[self._from:self._to]
+
+        elif self._from != -1:
+            xml_files = xml_files[self._from:]
+            pdf_files = pdf_files[self._from:]
+
+        elif self._to != -1:
+            xml_files = xml_files[:self._to]
+            pdf_files = pdf_files[:self._to]
 
 
         return list(zip(xml_files, pdf_files))
