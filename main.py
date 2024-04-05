@@ -64,7 +64,7 @@ def main():
     }
 
     WRONG_WORD_ENDINGS: dict[str, set[str | int]] = {
-        'von': {'m', 'n', -1},
+        'von': {'m', 'n'},
         'un': {'m', 'n'},
         'an': {'m', 'n'},
         'in': {'m', 'n'},
@@ -147,7 +147,7 @@ def main():
 
                         print(f'{xml_char:<3} {pdf_char:<3} {page_number:<3}')
 
-                        if pdf_char.lower() == xml_char.lower() or pdf_char in WRONG_WORD_ENDINGS.get(
+                        if pdf_char == xml_char or pdf_char in WRONG_WORD_ENDINGS.get(
                                 element.text.lower(), set()):
 
                             fromPage = min(fromPage, page_number)
@@ -174,7 +174,7 @@ def main():
 
                         else:
                             # HANDLING SPECIAL CASES
-                            # extra character in xml because of sentence analysis (e.g. 'vn' in xml is 'v' in pdf)
+                            # same word can have different endings in pdf (von in xml can be von or vom in pdf)
                             if elements[
                                 i].text.lower() in WRONG_WORD_ENDINGS.keys() and pdf_char in WRONG_WORD_ENDINGS.get(
                                 elements[i].text.lower(), set()):
@@ -204,6 +204,12 @@ def main():
                                 j += 1
                                 continue
 
+                            # word is split in two lines
+                            if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE:
+                                isWordOnMultipleLines = True
+                                j += 1
+                                continue
+
                             # extra character in pdf
                             if pdf_char.isalnum() and xml_char.isalnum() and pdf_char.lower() != xml_char.lower():
                                 j += 1
@@ -217,12 +223,6 @@ def main():
                             # special characters in xml that should be skipped
                             if xml_char in CHARS_TO_SKIP:
                                 k += 1
-                                continue
-
-                            # word is split in two lines
-                            if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE:
-                                isWordOnMultipleLines = True
-                                j += 1
                                 continue
 
                             # extra numeric character in pdf
