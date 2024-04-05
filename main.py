@@ -16,14 +16,15 @@ def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, floa
     for fromPage, toPage, isWordOnMultipleLines, x1, y1, x2, y2, x3, y3, x4, y4 in bbx:
 
         # skipping elements that were not found in the pdf
-        if fromPage == 99999 or toPage == -99999 or x1 == float('inf'):
+        if fromPage == 99999 or toPage == -99999 or (x1 == float('inf') and x3 == float('inf')):
             continue
 
         # drawing bounding boxes
-        images[fromPage - (1 + offset)].draw_rect((x1, y1, x2, y2), fill=None, stroke_width=1)
+        if not x1 == float('inf'):
+            images[fromPage - (1 + offset)].draw_rect((x1, y1, x2, y2), fill=None, stroke_width=1)
 
         # drawing extra bounding box for words that are on multiple lines
-        if isWordOnMultipleLines:
+        if not x3 == float('inf'):
             images[toPage - (1 + offset)].draw_rect((x3, y3, x4, y4), fill=None, stroke_width=1)
 
     for image in images:
@@ -155,7 +156,7 @@ def main():
 
                             # checking if one word has space that is braking it in two lines
                             if ' ' in element.text and \
-                                round(pdf_chars[j - 1]['top'], 2) != round(pdf_chars[j]['top'], 2):
+                                    round(pdf_chars[j - 1]['top'], 2) != round(pdf_chars[j]['top'], 2):
                                 isWordOnMultipleLines = True
 
                             # handling words that are on the same line
