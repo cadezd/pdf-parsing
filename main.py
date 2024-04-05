@@ -13,14 +13,18 @@ def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, floa
         for page in pdf.pages[offset:]:
             images.append(page.to_image(resolution=resolution))
 
-    for fromPage, toPage, isWordOnMultipleLines, *bbxs in bbx:
-        print(fromPage, toPage, isWordOnMultipleLines, bbxs)
+    for fromPage, toPage, isWordOnMultipleLines, x1, y1, x2, y2, x3, y3, x4, y4 in bbx:
 
-        # if element wasn't something went wrong so break
-        # if x1 == float('inf') or y1 == float('inf') or x2 == float('-inf') or y2 == float('-inf'):
-        #    continue
+        # skipping elements that were not found in the pdf
+        if fromPage == 99999 or toPage == -99999 or x1 == float('inf'):
+            continue
 
-        # images[fromPage - (1 + offset)].draw_rect((x1, y1, x2, y2), fill=None, stroke_width=1)
+        # drawing bounding boxes
+        images[fromPage - (1 + offset)].draw_rect((x1, y1, x2, y2), fill=None, stroke_width=1)
+
+        # drawing extra bounding box for words that are on multiple lines
+        if isWordOnMultipleLines:
+            images[toPage - (1 + offset)].draw_rect((x3, y3, x4, y4), fill=None, stroke_width=1)
 
     for image in images:
         image.show()
@@ -73,7 +77,6 @@ def main():
         './testing_xml',
         './testing_pdf',
         _idx=0
-
     )
 
     for idx, (xml_file_path, pdf_file_path) in enumerate(script_reader.group_xml_pdf()):
@@ -103,7 +106,7 @@ def main():
 
                 # list of bounding boxes of words
                 bbx: list[tuple[
-                    int, int, bool, float, float, float, float, float | None, float | None, float | None, float | None]
+                    int, int, bool, float, float, float, float, float, float, float, float]
                 ] = []
 
                 i = 0  # index for elements
@@ -124,8 +127,8 @@ def main():
                     k = 0  # index for xml_chars
                     # data to add to the element
                     isWordOnMultipleLines: bool = False
-                    fromPage: float = float('inf')
-                    toPage: float = float('-inf')
+                    fromPage: int = 99999
+                    toPage: int = -99999
                     x1: float = float('inf')
                     y1: float = float('inf')
                     x2: float = float('-inf')
@@ -150,14 +153,15 @@ def main():
                             fromPage = min(fromPage, page_number)
                             toPage = max(toPage, page_number)
 
-                            x1 = round(min(x1, pdf_chars[j]['x0']), 2)
-                            y1 = round(min(y1, pdf_chars[j]['top']), 2)
-                            x2 = round(max(x2, pdf_chars[j]['x1']), 2)
-                            y2 = round(max(y2, pdf_chars[j]['bottom']), 2)
+                            # handling words that are on the same line
+                            if not isWordOnMultipleLines:
+                                x1 = round(min(x1, pdf_chars[j]['x0']), 2)
+                                y1 = round(min(y1, pdf_chars[j]['top']), 2)
+                                x2 = round(max(x2, pdf_chars[j]['x1']), 2)
+                                y2 = round(max(y2, pdf_chars[j]['bottom']), 2)
 
                             # handling words that are on multiple lines
-                            if pdf_chars[j]['top'] != y2:
-                                isWordOnMultipleLines = True
+                            else:
                                 x3 = round(min(x3, pdf_chars[j]['x0']), 2)
                                 y3 = round(min(y3, pdf_chars[j]['top']), 2)
                                 x4 = round(max(x4, pdf_chars[j]['x1']), 2)
@@ -217,6 +221,7 @@ def main():
 
                             # word is split in two lines
                             if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE:
+                                isWordOnMultipleLines = True
                                 j += 1
                                 continue
 
@@ -250,8 +255,9 @@ def main():
                             element.set('x4', str(x4))
                             element.set('y4', str(y4))
 
-                        bbx.append((fromPage, toPage, isWordOnMultipleLines, x1, y1, x2, y2, None, None, None,
-                                    None))
+                        bbx.append(
+                            (fromPage, toPage, isWordOnMultipleLines, x1, y1, x2, y2, x3, y3, x4, y4)
+                        )
 
                     print()
                     i += 1
