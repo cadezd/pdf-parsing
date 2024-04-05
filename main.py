@@ -95,7 +95,7 @@ def main():
                     break
                 elements.pop(0)
 
-            with pdfplumber.open(pdf_file_path) as pdf:
+            with (pdfplumber.open(pdf_file_path) as pdf):
                 # check last page if there is more than one 70% of characters that are not alphanumeric remove it
                 # if len([char for char in pdf.pages[-1].chars if not char['text'].isalnum()]) > 0.7 * len(pdf.pages[-1].chars):
                 #    pdf.pages.pop(-1)
@@ -152,6 +152,11 @@ def main():
 
                             fromPage = min(fromPage, page_number)
                             toPage = max(toPage, page_number)
+
+                            # checking if one word has space that is braking it in two lines
+                            if ' ' in element.text and \
+                                round(pdf_chars[j - 1]['top'], 2) != round(pdf_chars[j]['top'], 2):
+                                isWordOnMultipleLines = True
 
                             # handling words that are on the same line
                             if not isWordOnMultipleLines:
