@@ -44,7 +44,7 @@ class XMLEditor:
 
     def save(self, folder: str):
         """Save the xml file to the folder."""
-        self.tree.write(os.path.join(folder, self.name))
+        self.tree.write(os.path.join(folder, self.name), encoding='utf-8')
 
     def add_coordinates_to_sentences(self):
         """
