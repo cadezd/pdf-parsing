@@ -7,7 +7,7 @@ from XMLEditor import XMLEditor
 
 
 def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, float, float]], resolution: int = 150,
-                offset: int = 0):
+                offset: int = 0, stroke: str = 'red'):
     images = []
     with pdfplumber.open(pdf_file_path) as pdf:
         for page in pdf.pages[offset:]:
@@ -21,11 +21,19 @@ def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, floa
 
         # drawing bounding boxes
         if not x1 == float('inf'):
-            images[fromPage - (1 + offset)].draw_rect((x1, y1, x2, y2), fill=None, stroke_width=1)
+            images[fromPage - (1 + offset)].draw_rect(
+                (x1, y1, x2, y2),
+                stroke_width=1,
+                stroke=stroke
+            )
 
         # drawing extra bounding box for words that are on multiple lines
         if not x3 == float('inf'):
-            images[toPage - (1 + offset)].draw_rect((x3, y3, x4, y4), fill=None, stroke_width=1)
+            images[fromPage - (1 + offset)].draw_rect(
+                (x3, y3, x4, y4),
+                stroke_width=1,
+                stroke=stroke
+            )
 
     for image in images:
         image.show()
@@ -53,7 +61,6 @@ def main():
     WRONG_WORDS_IN_XML: dict[str, str] = {
         'üea': 'unterm',
         'üuf': 'fürs',
-        '|': 'I'
     }
 
     # words that are different in the pdf because of the sentence analysis (xml word, possible pdf words)
@@ -77,7 +84,7 @@ def main():
     script_reader: ScriptReader = ScriptReader(
         './testing_xml',
         './testing_pdf',
-        _idx=0
+        _idx=3
     )
 
     for idx, (xml_file_path, pdf_file_path) in enumerate(script_reader.group_xml_pdf()):
@@ -155,7 +162,9 @@ def main():
                             toPage = max(toPage, page_number)
 
                             # checking if one word has space that is braking it in two lines
-                            if ' ' in element.text and \
+                            if i - 1 > 0 and \
+                                    elements[i - 1].tag == '{http://www.tei-c.org/ns/1.0}w' and \
+                                    ' ' in element.text and \
                                     round(pdf_chars[j - 1]['top'], 2) != round(pdf_chars[j]['top'], 2):
                                 isWordOnMultipleLines = True
 
@@ -211,7 +220,9 @@ def main():
                                 continue
 
                             # word is split in two lines
-                            if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE:
+                            if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE \
+                                    and j + 1 < len(pdf_chars) \
+                                    and pdf_chars[j + 1]['top'] > pdf_chars[j]['top']:
                                 isWordOnMultipleLines = True
                                 j += 1
                                 continue
@@ -248,7 +259,7 @@ def main():
                     if element.tag not in DONT_PROCESS_TAGS:
                         element.set('fromPage', str(fromPage))
                         element.set('toPage', str(toPage))
-                        element.set('isOnMultipleLines', str(isWordOnMultipleLines))
+                        element.set('isBroken', str(isWordOnMultipleLines))
                         element.set('x1', str(x1))
                         element.set('y1', str(y1))
                         element.set('x2', str(x2))
@@ -270,6 +281,12 @@ def main():
 
             # shows the mapping of the elements to the pdf
             show_result(pdf_file_path, bbx, offset=1)
+
+            # adding coordinates to the sentences (based on words attributes)
+            xml_editor.add_coordinates_to_sentences()
+
+            # adding coordinates to the segments (based on sentences attributes)
+            xml_editor.add_coordinates_to_segments()
 
             # saving the xml file
             xml_editor.save('./output')
