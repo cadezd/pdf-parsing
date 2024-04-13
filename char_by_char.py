@@ -1,3 +1,6 @@
+import glob
+import os
+import traceback
 import xml.etree.ElementTree as ET
 
 import pdfplumber
@@ -6,7 +9,32 @@ from ScriptReader import ScriptReader
 from XMLEditor import XMLEditor
 
 
-def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, float, float]], resolution: int = 150,
+def show_statistics():
+    # show statistics number of files in ./testing_xml folder, number of files in ./output folder and percentage of files that are processed
+    files_in_testing_xml = len([name for name in os.listdir('./testing_xml')])
+    files_in_output = len([name for name in os.listdir('./output')])
+    percentage_of_processed_files = files_in_output / files_in_testing_xml * 100
+    print(f'Files in ./testing_xml: {files_in_testing_xml}')
+    print(f'Files in ./output: {files_in_output}')
+    print(f'Percentage of processed files: {percentage_of_processed_files:.2f}%')
+
+
+def remove_processing_files():
+    # delete all the files from testing_xml and testing_pdf that are in the output folder
+    for file in glob.glob('./output/*'):
+        file_name = os.path.basename(file)
+        file_name = file_name.removesuffix('.tei.xml')
+
+        if os.path.exists(f'./testing_xml/{file_name}.tei.xml'):
+            os.remove(f'./testing_xml/{file_name}.tei.xml')
+
+        if os.path.exists(f'./testing_pdf/{file_name}.pdf'):
+            os.remove(f'./testing_pdf/{file_name}.pdf')
+
+
+def show_result(pdf_file_path: str,
+                bbx: list[tuple[int, int, bool, float, float, float, float, float, float, float, float]],
+                resolution: int = 150,
                 offset: int = 0, stroke: str = 'red'):
     images = []
     with pdfplumber.open(pdf_file_path) as pdf:
@@ -29,7 +57,7 @@ def show_result(pdf_file_path: str, bbx: list[tuple[int, int, float, float, floa
 
         # drawing extra bounding box for words that are on multiple lines
         if not x3 == float('inf'):
-            images[fromPage - (1 + offset)].draw_rect(
+            images[toPage - (1 + offset)].draw_rect(
                 (x3, y3, x4, y4),
                 stroke_width=1,
                 stroke=stroke
@@ -55,36 +83,38 @@ def main():
                                 '!', ';', '\\', '\"', '=', '+', '?', ']', '[', '{', '}', '@', '§', '°', '€', '£', '¥',
                                 '■', '•', '~', '´', '`', '¨', '¬', '¦', '©', '®', '™', '±', '×', '÷', 'µ', '¶', '§',
                                 '†', '‡', '°', '¢', '¤', '«', '»', '‹', '›', '„', '“', '”', '‘', '’', '‚', '…', '–',
-                                '¿', '_', '♦']
+                                '¿', '_', '♦', '*']
 
     # words that were messed up in the xml during sentence analysis (xml word, pdf word)
     WRONG_WORDS_IN_XML: dict[str, str] = {
         'üea': 'unterm',
         'üuf': 'fürs',
+        'üer': 'Fürs',
+        'aaaf': 'außer',
+        'voei': 'vollem'
     }
 
     # words that are different in the pdf because of the sentence analysis (xml word, possible pdf words)
     POSSIBLE_ENDINGS: dict[str, set[str]] = {
         'zu': {'r', 'm'},
         'an': {'u', 's'},
-        'bei': {'m', },
+        'bei': {'m'},
         'in': {'s'},
     }
 
     WRONG_WORD_ENDINGS: dict[str, set[str | int]] = {
         'von': {'m', 'n'},
         'un': {'m', 'n'},
-        'an': {'m', 'n'},
+        'an': {'A', 'm', 'n'},
         'in': {'m', 'n'},
         'vn': {-1},
         'bei': {'d', 'e', 'm'},
-        'voei': {'v', 'o', 'l', 'e', 'm'}
+        'voei': {'v', 'o', 'l', 'e', 'm'},
     }
 
     script_reader: ScriptReader = ScriptReader(
         './testing_xml',
         './testing_pdf',
-        _idx=3
     )
 
     for idx, (xml_file_path, pdf_file_path) in enumerate(script_reader.group_xml_pdf()):
@@ -103,7 +133,7 @@ def main():
                     break
                 elements.pop(0)
 
-            with (pdfplumber.open(pdf_file_path) as pdf):
+            with pdfplumber.open(pdf_file_path) as pdf:
                 # check last page if there is more than one 70% of characters that are not alphanumeric remove it
                 # if len([char for char in pdf.pages[-1].chars if not char['text'].isalnum()]) > 0.7 * len(pdf.pages[-1].chars):
                 #    pdf.pages.pop(-1)
@@ -222,7 +252,7 @@ def main():
                             # word is split in two lines
                             if pdf_char in CAHRS_THAT_INDICATE_NEW_LINE \
                                     and j + 1 < len(pdf_chars) \
-                                    and pdf_chars[j + 1]['top'] > pdf_chars[j]['top']:
+                                    and round(pdf_chars[j + 1]['top']) != round(pdf_chars[j]['top']):
                                 isWordOnMultipleLines = True
                                 j += 1
                                 continue
@@ -280,7 +310,7 @@ def main():
                     i += 1
 
             # shows the mapping of the elements to the pdf
-            show_result(pdf_file_path, bbx, offset=1)
+            # show_result(pdf_file_path, bbx, offset=1)
 
             # adding coordinates to the sentences (based on words attributes)
             xml_editor.add_coordinates_to_sentences()
@@ -288,13 +318,40 @@ def main():
             # adding coordinates to the segments (based on sentences attributes)
             xml_editor.add_coordinates_to_segments()
 
+
+            # get segments from the xml
+            segments = xml_editor.get_elements_by_tags(['{http://www.tei-c.org/ns/1.0}s'])
+            # get x1, y1, x2, y2 of the segments and store them in the list
+            segments_bbx = []
+            for segment in segments:
+                fromPage = int(segment.get('fromPage'))
+                toPage = int(segment.get('toPage'))
+                isBroken = segment.get('isBroken') == 'True'
+                x1 = float(segment.get('x1') if segment.get('x1') else float('inf'))
+                y1 = float(segment.get('y1') if segment.get('y1') else float('inf'))
+                x2 = float(segment.get('x2') if segment.get('x2') else float('-inf'))
+                y2 = float(segment.get('y2') if segment.get('y2') else float('-inf'))
+                x3 = float(segment.get('x3') if segment.get('x3') else float('inf'))
+                y3 = float(segment.get('y3') if segment.get('y3') else float('inf'))
+                x4 = float(segment.get('x4') if segment.get('x4') else float('-inf'))
+                y4 = float(segment.get('y4') if segment.get('y4') else float('-inf'))
+
+
+                segments_bbx.append((fromPage, toPage, isBroken, x1, y1, x2, y2, x3, y3, x4, y4))
+            
+            # shows the mapping of the elements to the pdf
+            show_result(pdf_file_path, segments_bbx, offset=1)
+
+
             # saving the xml file
             xml_editor.save('./output')
 
         except Exception as e:
-            print(e)
+            print(traceback.format_exc())
             print(idx, "Mistake in file: ", xml_file_path, pdf_file_path)
             continue
+
+    # remove_processing_files()
 
 
 if __name__ == '__main__':

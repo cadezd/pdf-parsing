@@ -1,5 +1,7 @@
+import math
 import os
 import xml.etree.ElementTree as ET
+from pprint import pprint
 
 
 class XMLEditor:
@@ -42,8 +44,19 @@ class XMLEditor:
 
         return result
 
+    def _remove_none_attrib(self, elem):
+        """Remove None attributes from XML tree"""
+        elem.attrib = {
+            k: elem.attrib[k]
+            for k in elem.attrib
+            if elem.attrib[k] is not None
+        }
+        for subelem in elem:
+            self._remove_none_attrib(subelem)
+
     def save(self, folder: str):
         """Save the xml file to the folder."""
+        self._remove_none_attrib(self.root)
         self.tree.write(os.path.join(folder, self.name), encoding='utf-8')
 
     def add_coordinates_to_sentences(self):
@@ -57,24 +70,48 @@ class XMLEditor:
             if not words:
                 continue
 
-            firstWord = words[0]
-            lastWord = words[-1]
+            # group words based on y coordinate
+            groups = [[], []]
+            group = 0
+            for i, word in enumerate(words):
+                if i > 0 and int(float(words[i - 1].get('y1'))) > int(float(word.get('y1'))):
+                    group = 1
+
+                groups[group].append(word)
+
+            pprint(groups)
+
+            # top y coordinate
+            groups[0].sort(key=lambda x: float(x.get('y1')))
+            wordWithMinY1 = groups[0][0]
+            # bottom y coordinate
+            groups[0].sort(key=lambda x: float(x.get('y2')))
+            wordWithMaxY2 = groups[0][-1]
+            # left x coordinate
+            groups[0].sort(key=lambda x: float(x.get('x1')))
+            wordWithMinX1 = groups[0][0]
+            # right x coordinate
+            groups[0].sort(key=lambda x: float(x.get('x2')))
+            wordWithMaxX2 = groups[0][-1]
 
             # get attributes of from first and last word to put in sentence
-            fromPage = firstWord.get('fromPage')
-            toPage = lastWord.get('toPage')
-            x1 = firstWord.get('x1')
-            y1 = firstWord.get('y1')
-            x2 = lastWord.get('x2') if lastWord.get('isOnMultipleLines') == 'False' else lastWord.get('x4')
-            y2 = lastWord.get('y2') if lastWord.get('isOnMultipleLines') == 'False' else lastWord.get('y4')
+            fromPage = wordWithMinY1.get('fromPage')
+            toPage = wordWithMaxY2.get('toPage')
+            isBroken = wordWithMinY1.get('fromPage') != wordWithMaxY2.get('toPage') or float(wordWithMaxY2.get('y2')) < float(
+                wordWithMinY1.get('y1'))
+            x1 = wordWithMinX1.get('x1')
+            y1 = wordWithMinY1.get('y1')
+            x2 = wordWithMaxX2.get('x2')
+            y2 = wordWithMaxY2.get('y2')
 
             # add attributes to sentence
             sentence.set('fromPage', fromPage)
             sentence.set('toPage', toPage)
-            sentence.set('x1', x1)
-            sentence.set('y1', y1)
-            sentence.set('x2', x2)
-            sentence.set('y2', y2)
+            sentence.set('isBroken', str(isBroken))
+            sentence.set('x1', str(min(float(x1), float(x2))))
+            sentence.set('y1', str(min(float(y1), float(y2))))
+            sentence.set('x2', str(max(float(x1), float(x2))))
+            sentence.set('y2', str(max(float(y1), float(y2))))
 
     def add_coordinates_to_segments(self):
         """
