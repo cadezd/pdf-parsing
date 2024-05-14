@@ -17,8 +17,6 @@ IGNORE_TAGS: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in IGNOR
 CAHRS_THAT_INDICATE_NEW_LINE: set[str] = {'­', '-', '—', '*'}
 CAHRS_THAT_INDICATE_END_OF_SENTENCE: set[str] = {'.', '?', '!'}
 
-THRESHOLD: float = 0.75
-
 
 def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
     # get min x1 coordinate
@@ -32,12 +30,37 @@ def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
     return middle
 
 
-def sort_words_by_column(pdf_words: list[dict]) -> list[dict]:
-    middle = get_x_column_border_coordinate(pdf_words)
-    left_column_word = [word for word in pdf_words if word['x1'] < middle]
-    right_column_word = [word for word in pdf_words if word['x0'] >= middle]
+def sort_words(pdf_words: list[dict]) -> list[dict]:
+    # get the last occurrence of the word "Seja" on the pdf
+    last_seja_occurrence = None
+    for word in pdf_words:
+        if word['text'].lower() in {"konec", "javna", "seja", "konča"}:
+            last_seja_occurrence = word
 
-    return left_column_word + right_column_word
+    bottom = last_seja_occurrence['top']
+    last_page_no = last_seja_occurrence['page_no']
+
+    # sort words on each page by column
+    sorted_words = []
+    page_numbers = sorted(list(set([word['page_no'] for word in pdf_words])))
+
+    for page_no in page_numbers:
+        words_on_same_page = [word for word in pdf_words if word['page_no'] == page_no]
+
+        middle = get_x_column_border_coordinate(words_on_same_page)
+
+        if page_no != last_page_no:
+            left_column_words = [word for word in words_on_same_page if word['x1'] < middle]
+            right_column_words = [word for word in words_on_same_page if word['x0'] >= middle]
+            sorted_words.extend(left_column_words + right_column_words)
+        else:
+            left_column_words = [word for word in words_on_same_page if word['x1'] < middle and word['bottom'] < bottom]
+            right_column_words = [word for word in words_on_same_page if
+                                  word['x0'] >= middle and word['bottom'] < bottom]
+            bottom_words = [word for word in words_on_same_page if word['bottom'] >= bottom]
+            sorted_words.extend(left_column_words + right_column_words + bottom_words)
+
+    return sorted_words
 
 
 def get_text_from_element(element: ET.Element) -> str:
@@ -99,11 +122,25 @@ def show_result(pdf_path: str, bbxs: list[tuple[int, float, float, float, float]
         image.show()
 
 
+def get_len_of_n_next_words(query: str, idx: int, n: int) -> int:
+    query_tmp = query[idx:]
+    words = query_tmp.split()
+    end_idx = min(n, len(words))
+    return sum([len(word) for word in words[:end_idx]])
+
+
+def get_len_of_n_previous_words(query: str, idx: int, n: int) -> int:
+    query_tmp = query[:idx]
+    words = query_tmp.split()
+    start_idx = max(0, len(words) - n)
+    return sum([len(word) for word in words[start_idx:]])
+
+
 def main():
     script_reader: ScriptReader = ScriptReader(
         './testing_xml',
         './testing_pdf',
-        _idx=30
+        _idx=6
     )
 
     SUCCESSFUL: int = 0
@@ -118,88 +155,92 @@ def main():
         # get a list of all words in the pdf
         pdf_words: list[dict] = []
         with pdfplumber.open(pdf_file_path) as pdf:
+            # get the last occurrence of the word "Seja" on the pdf
             for page_no, pdf_page in enumerate(pdf.pages[1:]):
                 # get all words on the page and sort them by column
                 page_words = pdf_page.extract_words()
                 if page_words:
-                    page_words: list[dict] = sort_words_by_column(pdf_page.extract_words())
+                    page_words: list[dict] = pdf_page.extract_words()
                     # add page number to each word
                     page_words = [{'page_no': page_no, **word} for word in page_words]
                     pdf_words.extend(page_words)
                 else:
-                    break
+                    continue
+
+        pdf_words = sort_words(pdf_words)
 
         bbxs: list[tuple[int, float, float, float, float]] = []
+
+        # all words from pdf concatenated
         query: str = ' '.join([w['text'] for w in pdf_words])
 
-        sentence_order_no: dict = {}
+        # indexes of the best match
         best_match_start: int = 0
         best_match_end: int = 0
 
-        # TODO: dodelaj da je iskanje omejeno na določeno področje
+        # indexes of the search area
+        idx_search_start: int = 0
+        idx_search_end: int = 0
+        WORD_BUFFER_FORDWARDS: int = 20
+        WORD_BUFFER_BACKWARDS: int = 0
+
+        # similarity threshold
+        THRESHOLD: float = 0.8
 
         try:
             while sentences_str:
+                # miss counter
+                MISS: int = 0
+
+                # sentence from xml that we want to find in the pdf
                 target: str = sentences_str.pop(0)
 
-                # since some sentences are equal
-                # we must get the start and end indexes of the correct sentence
-                if target in sentence_order_no:
-                    sentence_order_no[target] += 1
-                else:
-                    sentence_order_no[target] = 1
+                # adjust searching area while searching for the target sentence
+                while True:
+                    # limiting the search of the target sentence to a certain area
+                    idx_search_start = best_match_end
+                    idx_search_end = (best_match_end +
+                                      len(target) +
+                                      get_len_of_n_next_words(query, best_match_end, WORD_BUFFER_FORDWARDS))
+                    query_limited: str = query[idx_search_start:idx_search_end]
 
-                result = edlib.align(target, query, task="path", mode="HW",
-                                     additionalEqualities=[('­', '-'), ('-', '­')])
+                    # print("QUERY LIMITED:", query_limited)
 
-                # print(f'{target} |', end=' ')
-                # get best match indexes
-                # correct_sentence_order_no = sentence_order_no[target] if sentence_order_no[target] < len(
-                #    result['locations']) else len(result['locations']) - 1
+                    # getting best match indexes
+                    # and adding idx_search_start to them, because we limited the search area
+                    result = edlib.align(target, query_limited, task="path", mode="HW")
 
-                correct_sentence_order_no = sentence_order_no[target] - 1
+                    similarity = max(1 - result['editDistance'] / len(target), 0)
 
-                # handling when the line is split into two lines, but there is the exact same line but not split
-                if correct_sentence_order_no >= len(result['locations']):
-                    best_match = ''
-
-                    length = len(target) - 1
-
-                    # while best match does not contain chars that indicate new line
-                    while not any(char in best_match for char in CAHRS_THAT_INDICATE_NEW_LINE) and length > 0:
-                        tmp_target = target[:length] + '-' + target[length:]
-
-                        result = edlib.align(tmp_target, query, task="path", mode="HW",
-                                             additionalEqualities=[('­', '-'), ('-', '­')])
-
-                        best_match_start = result['locations'][0][0]
-                        best_match_end = result['locations'][0][-1]
-                        best_match = query[best_match_start:best_match_end]
-
+                    # when you get a good enough match
+                    # break and reset the WORD_BUFFER_FORDWARDS, WORD_BUFFER_BACKWARDS and MISS counter
+                    if similarity >= THRESHOLD:
+                        best_match_start = idx_search_start + result['locations'][0][0]
+                        best_match_end = idx_search_start + result['locations'][0][-1]
                         print(
-                            f'{tmp_target} | {best_match} | {best_match_start} | {best_match_end} | {any(char in best_match for char in CAHRS_THAT_INDICATE_NEW_LINE)}')
+                            f'{target} -> {best_match_start, best_match_end} -> {query[best_match_start:best_match_end]} -> {similarity}')
+                        WORD_BUFFER_FORDWARDS = 10
+                        WORD_BUFFER_BACKWARDS = 0
+                        break
+                    else:
+                        if MISS > 15:
+                            WORD_BUFFER_BACKWARDS += 5
+                            print(f'{target} -> NOT FOUND')
+                            break
+                        else:
+                            # increase the search area forwards
+                            WORD_BUFFER_FORDWARDS += 5
 
-                        length -= 1
+                        MISS += 1
 
-                else:
-                    best_match_start = result['locations'][correct_sentence_order_no][0]
-                    best_match_end = result['locations'][correct_sentence_order_no][-1]
-
-                    # get best match string
-                    best_match = query[best_match_start:best_match_end]
-
-                    # print(f'{best_match_start} | {best_match_end} | {best_match} ')
-                    # print()
-
+                # getting data for the bounding box for the target sentence
                 idx = 0
                 for word in pdf_words:
                     if best_match_start <= idx <= best_match_end:
                         bbxs.append((word['page_no'], word['x0'], word['top'], word['x1'], word['bottom']))
                         # print(word['text'])
-
                     if idx >= best_match_end:
                         break
-
                     idx += len(word['text']) + 1
 
                 # print()
@@ -219,6 +260,7 @@ def main():
     print(f'SUCCESSFUL: {SUCCESSFUL}')
     print(f'UNSUCCESSFUL: {UNSUCCESSFUL}')
     print(f'SUCCESSFUL: {SUCCESSFUL / (SUCCESSFUL + UNSUCCESSFUL) * 100}%')
+
 
 if __name__ == '__main__':
     main()
