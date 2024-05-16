@@ -4,3 +4,5 @@ pdf/
 testing_pdf/
 testing_xml/
 xml/
+*.pdf
+*.xml
