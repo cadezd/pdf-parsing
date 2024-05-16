@@ -170,6 +170,7 @@ def get_words_from_pdf(pdf_path: str) -> list[dict]:
         first_page: pdfplumber.page.Page = pdf.pages[0]
         first_page_words: list[dict] = first_page.extract_words(use_text_flow=True)
         first_page_words = remove_header(first_page_words)
+        first_page_words = [{'page_no': 0, **word} for word in first_page_words]
         pdf_words.extend(first_page_words)
 
         # get all words from the rest of the pages
@@ -189,9 +190,9 @@ def get_words_from_pdf(pdf_path: str) -> list[dict]:
 
 def main():
     script_reader: ScriptReader = ScriptReader(
-        './all_xml',
-        './all_pdf',
-        _idx=3
+        './testing_xml',
+        './testing_pdf',
+        _idx=1
     )
 
     SUCCESSFUL: int = 0
