@@ -17,6 +17,58 @@ IGNORE_TAGS: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in IGNOR
 CAHRS_THAT_INDICATE_NEW_LINE: set[str] = {'­', '-', '—', '*'}
 CAHRS_THAT_INDICATE_END_OF_SENTENCE: set[str] = {'.', '?', '!'}
 
+SESSION_START_GER: set = {"Beginn", "Deginn", "Keginn", "Jeginn", "Heginn", "Begimi",
+                          "eginn der Sitzung", "eginn der Zitzung", "Login» der Sitzung", "Britinn brv Sitzung",
+                          "Dezinn litt fiUmtg", "Beginn -er Sitzung", "Deginu der Sitzung", "Leginn brv Sitzung",
+                          "fSegtun der Sitzung um", "beginn Mr Sitzung um", "ßcijiim der Ätzung",
+                          "fPiginu ber ^it)ung um", "glegtnn Per ¿Styling um", "Srginn der Sitzung",
+                          "Region der Sitzung", "Leginn der Ätzung", "§ e p i i bet Sitzung", "Drginn der Sitzung",
+                          "Hechln der Sitzung", "Srgtmt der Zitznng", "Hrginil d«tt Iibmig mit",
+                          "Seginil der Sitzung", "Drginn dctt Aitrung", "örginn der Sitzung", "fkflinn her SKfeung",
+                          "jßrgiim der Sitzung", "fUeflinn ber", "gigttttt bet §t|u«3", "Seginn bet Sitzung",
+                          "Segiuu der Sitzung", "ßrgiim k r Sitzung", "§ r p it bor Sitzung", "beginn jSi^ung um",
+                          "peginn her &itung", "ßrgiim kr Sitzung", "Beginn brr Zitznng", "Beginn brr Sitzung",
+                          "Beginn der Ätzung", "ßegimt der Sitzung", "Dcginn der Sitzung", "Scgiitii brr Sitzung",
+                          "Beginn der Kitznng", "Leginn drr Sitzung", "§epii bet Sitzung", "§rpit bor Sitzung",
+                          "Äegiun -er Sitzung", "Mglmi der Sitzung mit", "Hegiml llq Kilrnng m\ 10",
+                          "Hrgimi iln* Piirmig itiij 9", "Zcginn der Sitzung um 10", "§tgmit der Sitzung mit 10",
+                          "Hcgiim litt! sibling MI, 11 Ht", "fegtmt ber §tipng 10 Uftjr",
+                          "beginn lles sibling mg 9 Rhr", "Legi«« der Zitznng", "Scflinn der Ätzung",
+                          "Stgintt der Ätzung um", "Ärginn der Sitzung", "Beginn !>er Sitzung", "Beginn der Zitznng",
+                          "Beginn der öffentlichcii Sitzung", "Legiiin Der Sitzung", "Hrgmii der Sitzung um",
+                          "beginn dttt Aiirung mit", "Scgtiiu der Sitzung", "Scgittn ber Strung",
+                          "jBrginn der Sitzung um", "ßrßtntt der Zitziing", "Legi mi der Sitzung",
+                          "Segiim der Sitzung", "Legiim ber Zitzimg", "I beginn tier Sitzung um",
+                          "Dkginn brr Zihung um", "ßegiiin tier Sitzung", "§epm bet Sitzung um",
+                          "Leginn der Litzung", "tu'if in n der Sitzung mn", "$t9inn btt giijuttg", "Mgiim",
+                          "Helsinn der Sitzung", "Skginn brr Sitzung", "feptn der Sitzung um",
+                          "beginn litt Illenng Nil,", "Zrginn der Sitzung", "Čcgimt der Sitzung",
+                          "Scgtttn der Sitzung", "Krginn der Sitzung um", "Demi) der Sitzung um",
+                          "Htginn litt: Stirling tut]", "Hechln ßer Sitzung um", "Hessinn riet sibling NN,",
+                          "§tgimt der Sitzung, um", "ßrgtmi der Zitzmig", "Beginn der Litznng", "Srgiim der Sitzung",
+                          "lepit der Sitzung um", "gegttm ber Snijuttg urn", "ßrgtnit der Sitzung",
+                          "$eginn ber §üsuttg", "Uegiim 6cv Sitzung um", "Beginn 6er Sitzung",
+                          "§fgmn bet Sitzung um", "(beginn der Litznng", "ßnjimi der Sitzung",
+                          "Scginn der Sitzung um", "Legiim der Sitzung", "Mginn der Sitzung",
+                          "Ürginn örv Sitzung mit", "Kegin» der Sitzung", "ißegitm in* Sitzung mit",
+                          "Beginn bet Sitzung um", "Legiiin bcr Ätzung", "Lrginn der Zitzuiig",
+                          "Beginn !>er Sitjumi", "Äeginu der Sitzung", "§egimt der Sitzung", "Leginn kr Sitzung NM",
+                          "§tpm der Siting um", "Segiiin kr Zitznng", "Irginn der Sitzung m", "Seginn brr Sitzung",
+                          "Iegimr der Sitzung um", "Srgtnti der Sitzung", "ßrgtttn der Sitzung",
+                          "iltt fdbnittj} itttj 11 Ijljr", "Üegiun der Siijimg", "Beginn-erSitznng um",
+                          "ßfßtntt der Sitzung", "gegttm ber giijimg", "Drginn dcr Sitzung", "legtntt in §tijung",
+                          "Beginn der Sihung", "Üeginn t>cr Sitzung mu", "Lrginn der Sitzung",
+                          "Zegiuu der Sitzung um", "Degiiiii der Sitzmß um", "Lrginn der Ätzung",
+                          "jßrgtnn der Zitznng um", "gegiitn ber Biljung", "Scgiim der Ätzung", "Begin» der Sitzung",
+                          "Äegiim der Kitzung", "Lcginn der Sitzung", "Beginn tier Kihnlig"}
+SESSION_START_GER = {words.split(' ')[0] for words in SESSION_START_GER}
+
+SESSION_START_SLO: set = {"Začetek seje", "Seja se začne", "Seja sa začne", "Začetek ob ", "Seja se-začne",
+                          "Soja se začne", "Seja se prične", "Seja še začne", "8eja se začne", "Seja 8p začne",
+                          "Seja se začue", "Javna seja se začne", "Seja 86 začne o", "Seja se začnč o",
+                          "®eJa se začne ob", "Seja se začnd o", "Seja sc začne o"}
+SESSION_START_SLO = {words.split(' ')[0] for words in SESSION_START_SLO}
+
 
 def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
     # get min x1 coordinate
@@ -30,42 +82,29 @@ def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
     return middle
 
 
-def sort_words(pdf_words: list[dict]) -> list[dict]:
-    # get the last occurrence of the word "Seja" on the pdf
-    last_seja_occurrence = None
+def remove_header(pdf_words: list[dict]) -> list[dict]:
+    # get the first occurrence of the word that indicates the beginning of the session
+    session_begin_word = None
     for word in pdf_words:
-        if word['text'].lower() in {"konec", "javna", "seja", "konča"}:
-            last_seja_occurrence = word
+        if word['text'].strip() in SESSION_START_GER.union(SESSION_START_SLO):
+            session_begin_word = word
+            break
 
-    bottom = last_seja_occurrence['top']
-    last_page_no = last_seja_occurrence['page_no']
+    # get bottom coordinate of the session begin word
+    BOTTOM = session_begin_word['bottom']
+    # get the middle of the page
+    MIDDLE = get_x_column_border_coordinate(pdf_words)
 
-    # sort words on each page by column
-    sorted_words = []
-    page_numbers = sorted(list(set([word['page_no'] for word in pdf_words])))
+    # sort words that are below the header in two columns
+    left_column_words = [word for word in pdf_words if word['x1'] < MIDDLE and word['bottom'] < BOTTOM]
+    right_column_words = [word for word in pdf_words if word['x0'] >= MIDDLE and word['bottom'] < BOTTOM]
 
-    for page_no in page_numbers:
-        words_on_same_page = [word for word in pdf_words if word['page_no'] == page_no]
-
-        middle = get_x_column_border_coordinate(words_on_same_page)
-
-        if page_no != last_page_no:
-            left_column_words = [word for word in words_on_same_page if word['x1'] < middle]
-            right_column_words = [word for word in words_on_same_page if word['x0'] >= middle]
-            sorted_words.extend(left_column_words + right_column_words)
-        else:
-            left_column_words = [word for word in words_on_same_page if word['x1'] < middle and word['bottom'] < bottom]
-            right_column_words = [word for word in words_on_same_page if
-                                  word['x0'] >= middle and word['bottom'] < bottom]
-            bottom_words = [word for word in words_on_same_page if word['bottom'] >= bottom]
-            sorted_words.extend(left_column_words + right_column_words + bottom_words)
-
-    return sorted_words
+    return left_column_words + right_column_words
 
 
 def get_text_from_element(element: ET.Element) -> str:
     if element.tag == '{http://www.tei-c.org/ns/1.0}note':
-        return element.text
+        return ''
     else:
         sentence = ''
         for child in element.iter():
@@ -122,25 +161,37 @@ def show_result(pdf_path: str, bbxs: list[tuple[int, float, float, float, float]
         image.show()
 
 
-def get_len_of_n_next_words(query: str, idx: int, n: int) -> int:
-    query_tmp = query[idx:]
-    words = query_tmp.split()
-    end_idx = min(n, len(words))
-    return sum([len(word) for word in words[:end_idx]])
+def get_words_from_pdf(pdf_path: str) -> list[dict]:
+    # get a list of all words in the pdf
+    pdf_words: list[dict] = []
+    with pdfplumber.open(pdf_path) as pdf:
 
+        # remove header from the first page
+        first_page: pdfplumber.page.Page = pdf.pages[0]
+        first_page_words: list[dict] = first_page.extract_words(use_text_flow=True)
+        first_page_words = remove_header(first_page_words)
+        pdf_words.extend(first_page_words)
 
-def get_len_of_n_previous_words(query: str, idx: int, n: int) -> int:
-    query_tmp = query[:idx]
-    words = query_tmp.split()
-    start_idx = max(0, len(words) - n)
-    return sum([len(word) for word in words[start_idx:]])
+        # get all words from the rest of the pages
+        for page_no, pdf_page in enumerate(pdf.pages[1:]):
+            # get all words based on PDF's underlying flow of characters
+            page_words: list[dict] = pdf_page.extract_words(use_text_flow=True)
+
+            # add page number to each word it has text
+            if page_words:
+                page_words = [{'page_no': page_no, **word} for word in page_words]
+                pdf_words.extend(page_words)
+            else:
+                continue
+
+    return pdf_words
 
 
 def main():
     script_reader: ScriptReader = ScriptReader(
-        './testing_xml',
-        './testing_pdf',
-        _idx=6
+        './all_xml',
+        './all_pdf',
+        _idx=3
     )
 
     SUCCESSFUL: int = 0
@@ -153,97 +204,54 @@ def main():
         sentences_str: list[str] = [get_text_from_element(sentence) for sentence in sentences_ET]
 
         # get a list of all words in the pdf
-        pdf_words: list[dict] = []
-        with pdfplumber.open(pdf_file_path) as pdf:
-            # get the last occurrence of the word "Seja" on the pdf
-            for page_no, pdf_page in enumerate(pdf.pages[1:]):
-                # get all words on the page and sort them by column
-                page_words = pdf_page.extract_words()
-                if page_words:
-                    page_words: list[dict] = pdf_page.extract_words()
-                    # add page number to each word
-                    page_words = [{'page_no': page_no, **word} for word in page_words]
-                    pdf_words.extend(page_words)
-                else:
-                    continue
-
-        pdf_words = sort_words(pdf_words)
+        pdf_words: list[dict] = get_words_from_pdf(pdf_file_path)
 
         bbxs: list[tuple[int, float, float, float, float]] = []
 
         # all words from pdf concatenated
         query: str = ' '.join([w['text'] for w in pdf_words])
 
-        # indexes of the best match
-        best_match_start: int = 0
-        best_match_end: int = 0
-
-        # indexes of the search area
-        idx_search_start: int = 0
-        idx_search_end: int = 0
-        WORD_BUFFER_FORDWARDS: int = 20
-        WORD_BUFFER_BACKWARDS: int = 0
-
-        # similarity threshold
-        THRESHOLD: float = 0.8
+        word_occurrences: dict = dict()
 
         try:
             while sentences_str:
-                # miss counter
-                MISS: int = 0
 
                 # sentence from xml that we want to find in the pdf
                 target: str = sentences_str.pop(0)
 
+                # if the target contains any new line character, append the next sentence to it
+                if any([char in CAHRS_THAT_INDICATE_NEW_LINE for char in target]):
+                    if sentences_str:
+                        target += ' ' + sentences_str.pop(0)
+
+                if target in word_occurrences:
+                    word_occurrences[target] += 1
+                else:
+                    word_occurrences[target] = 0
+
                 # adjust searching area while searching for the target sentence
-                while True:
-                    # limiting the search of the target sentence to a certain area
-                    idx_search_start = best_match_end
-                    idx_search_end = (best_match_end +
-                                      len(target) +
-                                      get_len_of_n_next_words(query, best_match_end, WORD_BUFFER_FORDWARDS))
-                    query_limited: str = query[idx_search_start:idx_search_end]
 
-                    # print("QUERY LIMITED:", query_limited)
+                # getting best match indexes
+                # and adding idx_search_start to them, because we limited the search area
+                result = edlib.align(target, query, task="path", mode="HW")
 
-                    # getting best match indexes
-                    # and adding idx_search_start to them, because we limited the search area
-                    result = edlib.align(target, query_limited, task="path", mode="HW")
+                similarity = max(1 - result['editDistance'] / len(target), 0)
 
-                    similarity = max(1 - result['editDistance'] / len(target), 0)
-
-                    # when you get a good enough match
-                    # break and reset the WORD_BUFFER_FORDWARDS, WORD_BUFFER_BACKWARDS and MISS counter
-                    if similarity >= THRESHOLD:
-                        best_match_start = idx_search_start + result['locations'][0][0]
-                        best_match_end = idx_search_start + result['locations'][0][-1]
-                        print(
-                            f'{target} -> {best_match_start, best_match_end} -> {query[best_match_start:best_match_end]} -> {similarity}')
-                        WORD_BUFFER_FORDWARDS = 10
-                        WORD_BUFFER_BACKWARDS = 0
-                        break
-                    else:
-                        if MISS > 15:
-                            WORD_BUFFER_BACKWARDS += 5
-                            print(f'{target} -> NOT FOUND')
-                            break
-                        else:
-                            # increase the search area forwards
-                            WORD_BUFFER_FORDWARDS += 5
-
-                        MISS += 1
+                i = word_occurrences.get(target, 0)
+                print(i)
+                best_match_start = result['locations'][i][0]
+                best_match_end = result['locations'][i][-1]
+                print(
+                    f'{target} -> {best_match_start, best_match_end} -> {query[best_match_start:best_match_end]} -> {similarity}')
 
                 # getting data for the bounding box for the target sentence
                 idx = 0
                 for word in pdf_words:
                     if best_match_start <= idx <= best_match_end:
                         bbxs.append((word['page_no'], word['x0'], word['top'], word['x1'], word['bottom']))
-                        # print(word['text'])
                     if idx >= best_match_end:
                         break
                     idx += len(word['text']) + 1
-
-                # print()
 
             print(f'WORKS ON {pdf_file_path}')
             SUCCESSFUL += 1
