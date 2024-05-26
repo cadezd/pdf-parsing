@@ -1,4 +1,3 @@
-import math
 import os
 import xml.etree.ElementTree as ET
 from pprint import pprint
@@ -12,17 +11,22 @@ class XMLEditor:
         self.tree = ET.parse(xml_path)
         self.root = self.tree.getroot()
 
-    def get_elements_by_tags(self, tags: list[str], ignore_tags: list[str] = None) -> list[ET.Element]:
+    def get_elements_by_tags(self, tags: list[str], ignore_tags: list[str] = None,
+                             attributes: list[dict[str, str]] = None) -> \
+            list[
+                ET.Element]:
         """
         Returns list of elements with given tags
+        :param attributes:
         :param tags: list[str]
         :param ignore_tags: list[str]
         :return: list[ET.Element]
         """
-        return self._get_elements_by_tags(self.root, tags, [], ignore_tags)
+        return self._get_elements_by_tags(self.root, tags, [], ignore_tags, attributes)
 
     def _get_elements_by_tags(self, element: ET.Element, tags: list[str], result: list[ET.Element],
-                              ignore_tags: list[str] = None) -> list[ET.Element]:
+                              ignore_tags: list[str] = None, attributes: list[dict[str, str]] = None) -> list[
+        ET.Element]:
         """
         Recursive function to get elements by tags.
         :param element: ET.Element
@@ -38,9 +42,22 @@ class XMLEditor:
 
             # collects elements with given tags
             if child.tag in tags:
-                result.append(child)
+                if not attributes:
+                    result.append(child)
+                elif attributes:
+                    # if attributes contains NONE append child if it has no attributes
+                    if None in attributes and not child.attrib:
+                        result.append(child)
 
-            self._get_elements_by_tags(child, tags, result, ignore_tags)
+                    # if attributes contains a dictionary, check if child has the same attributes with same values
+                    for attr in attributes:
+                        if attr is None:
+                            continue
+
+                        if all(k in child.attrib and child.attrib[k] == v for k, v in attr.items()):
+                            result.append(child)
+
+            self._get_elements_by_tags(child, tags, result, ignore_tags, attributes)
 
         return result
 
@@ -97,7 +114,8 @@ class XMLEditor:
             # get attributes of from first and last word to put in sentence
             fromPage = wordWithMinY1.get('fromPage')
             toPage = wordWithMaxY2.get('toPage')
-            isBroken = wordWithMinY1.get('fromPage') != wordWithMaxY2.get('toPage') or float(wordWithMaxY2.get('y2')) < float(
+            isBroken = wordWithMinY1.get('fromPage') != wordWithMaxY2.get('toPage') or float(
+                wordWithMaxY2.get('y2')) < float(
                 wordWithMinY1.get('y1'))
             x1 = wordWithMinX1.get('x1')
             y1 = wordWithMinY1.get('y1')
