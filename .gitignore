@@ -4,6 +4,7 @@ parsanje/
 pdf/
 testing_pdf/
 testing_xml/
+results/
 xml/
 *.pdf
 *.xml
