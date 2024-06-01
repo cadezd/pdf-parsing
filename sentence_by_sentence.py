@@ -1,3 +1,5 @@
+import os.path
+import shutil
 import traceback
 import xml.etree.ElementTree as ET
 
@@ -69,6 +71,8 @@ SESSION_START_SLO: set = {"Začetek seje", "Seja se začne", "Seja sa začne", "
                           "®eJa se začne ob", "Seja se začnd o", "Seja sc začne o"}
 SESSION_START_SLO = {words.split(' ')[0] for words in SESSION_START_SLO}
 
+BUFFER_LIMIT: int = 200
+
 
 def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
     # get min x1 coordinate
@@ -118,35 +122,13 @@ def get_text_from_element(element: ET.Element) -> str:
         return sentence.strip()
 
 
-def get_chars_that_indicate_end_of_sentence(sentences: list[str]) -> set[str]:
-    chars_that_indicate_end_of_sentence = set()
-    for sentence in sentences:
-        last_char = sentence[-1]
-        if not last_char.isalnum():
-            chars_that_indicate_end_of_sentence.add(last_char)
+def prepare_result(xml_path: str, pdf_path: str, bbxs: list[tuple[int, float, float, float, float]], _from: int = -1,
+                   _to: int = -1):
+    # create folder from the xml file name in the results folder
+    file_name = os.path.basename(xml_path).split('.')[0]
+    folder = os.path.join('./results', file_name)
+    os.makedirs(folder, exist_ok=True)
 
-    return chars_that_indicate_end_of_sentence
-
-
-def calculate_similarity(query: str, target: str) -> float:
-    result = edlib.align(target, query, task="path", mode="NW")
-    return 1 - result['editDistance'] / len(target)
-
-
-def get_index_of_the_most_similar_word(idx: int, words: list[dict], target: str, lookahead: int = 5) -> int:
-    similarity = float('-inf')
-    most_similar_word_idx = idx
-
-    for i, word in enumerate(words[idx:idx + lookahead]):
-        similarity_tmp = calculate_similarity(word['text'], target)
-        if similarity_tmp > similarity:
-            similarity = similarity_tmp
-            most_similar_word_idx = idx + i
-
-    return most_similar_word_idx
-
-
-def show_result(pdf_path: str, bbxs: list[tuple[int, float, float, float, float]], _from: int = -1, _to: int = -1):
     images = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages[1:]:
@@ -155,24 +137,15 @@ def show_result(pdf_path: str, bbxs: list[tuple[int, float, float, float, float]
     for page_no, x1, y1, x2, y2 in bbxs:
         images[page_no].draw_rect((x1, y1, x2, y2), stroke_width=1)
 
-    _from = 0 if _from == -1 else _from
-    _to = len(images) if _to == -1 else _to
-    for i, image in enumerate(images[_from:_to]):
-        image.show()
+    # save the images with the bounding boxes in the folder
+    for idx, image in enumerate(images):
+        image.save(os.path.join(folder, f'{file_name}_{idx}.png'))
 
 
 def get_words_from_pdf(pdf_path: str) -> list[dict]:
     # get a list of all words in the pdf
     pdf_words: list[dict] = []
     with pdfplumber.open(pdf_path) as pdf:
-
-        # remove header from the first page
-        first_page: pdfplumber.page.Page = pdf.pages[0]
-        first_page_words: list[dict] = first_page.extract_words(use_text_flow=True)
-        first_page_words = remove_header(first_page_words)
-        first_page_words = [{'page_no': 0, **word} for word in first_page_words]
-        pdf_words.extend(first_page_words)
-
         # get all words from the rest of the pages
         for page_no, pdf_page in enumerate(pdf.pages[1:]):
             # get all words based on PDF's underlying flow of characters
@@ -185,94 +158,164 @@ def get_words_from_pdf(pdf_path: str) -> list[dict]:
             else:
                 continue
 
+    # TODO: dodelaj da odstrani vse besede pred prvo pojavitvijo besede seja in po zadnji besedi seja
+
     return pdf_words
 
 
-def remove_notes_from_pdf_words(pdf_words: list[dict], notes: list[str]) -> list[dict]:
-    query: str = '$'.join([w['text'] for w in pdf_words])
-    notes_locations: dict[str, list[tuple[int, int]]] = dict()
-    note_occurrences: dict[str, int] = dict()
+def get_len_of_next_n_words(query: str, idx: int, n: int) -> int:
+    words = query[idx:].split(' ')
+    return sum([len(word) + 1 for word in words[:n]])
 
-    # TODO: dodaj omejitve za iskanje note v query
 
-    # order notes by length in descending order
-    notes.sort(key=lambda x: len(x), reverse=True)
+def get_len_of_next_sentence(query: str, idx: int) -> int:
+    words = query[idx:].split(' ')
+    s = 0
+    for word in words:
+        # check if the word contains a character that indicates the end of the sentence
+        if any(char in word for char in CAHRS_THAT_INDICATE_END_OF_SENTENCE):
+            s += len(word) + 1
+            break
 
-    while notes:
-        # note from xml that we want to find in the pdf
-        target: str = notes.pop(0)
+        s += len(word) + 1
 
-        """
-        # get the location of the note in the pdf
-        if target not in notes_locations:
-            notes_locations[target] = []
+    return s
 
-        # if there are multiple occurrences of the same note, we need to keep track of them
-        if target in note_occurrences:
-            note_occurrences[target] += 1
+
+def handle_exception(pdf_words: list[dict], sentences_str: list[str]) -> list[
+    tuple[int, float, float, float, float]]:
+    bbxs: list[tuple[int, float, float, float, float]] = []
+
+    # all words from pdf concatenated
+    query: str = ' '.join([w['text'] for w in pdf_words])
+
+    best_match_start: int = 0
+    best_match_end: int = 0
+
+    result = {'locations': []}
+    search_area_start: int = 0
+
+    while sentences_str:
+        # sentence from xml that we want to find in the pdf
+        target: str = sentences_str.pop(0)
+        similarity: float = 0
+        BUFFER: int = 10
+
+        no_of_words = len(target.split(' '))
+        if no_of_words == 1:
+            SIMILARITY_THRESHOLD = 0.25
+        elif 1 < no_of_words < 5:
+            SIMILARITY_THRESHOLD = 0.6
+        elif 5 <= no_of_words < 10:
+            SIMILARITY_THRESHOLD = 0.7
+        elif 10 <= no_of_words < 20:
+            SIMILARITY_THRESHOLD = 0.75
         else:
-            note_occurrences[target] = 0
-            
-        """
+            SIMILARITY_THRESHOLD = 0.8
+
+        while similarity < SIMILARITY_THRESHOLD:
+            # adjust searching area while searching for the target sentence
+            search_area_start = best_match_end
+            search_area_end = search_area_start + len(target) + get_len_of_next_n_words(query,
+                                                                                        search_area_start,
+                                                                                        BUFFER)
+
+            query_limited: str = query[search_area_start:search_area_end]
+
+            # getting best match indexes
+            # and adding idx_search_start to them, because we limited the search area
+            result = edlib.align(target, query_limited, task="path", mode="HW")
+
+            similarity = 1 - result['editDistance'] / len(target)
+            BUFFER += 5
+
+            # print(similarity)
+            ##print(search_area_start, search_area_end)
+            ##print(query_limited)
+            # print(target)
+            # print()
+
+            # time.sleep(5)
+
+            if BUFFER > BUFFER_LIMIT:
+                raise Exception('BUFFER is too big')
+
+        best_match_start: int = search_area_start + result['locations'][0][0]
+        best_match_end: int = search_area_start + result['locations'][0][-1]
+
+        idx = 0
+
+        for word in pdf_words:
+            if best_match_start <= idx <= best_match_end:
+                bbxs.append((word['page_no'], word['x0'], word['top'], word['x1'], word['bottom']))
+            if idx >= best_match_end:
+                break
+            idx += len(word['text']) + 1
+
+    return bbxs
+
+
+def get_coordinates(pdf_words: list[dict], sentences_str: list[str]) -> list[
+    tuple[int, float, float, float, float]]:
+    bbxs: list[tuple[int, float, float, float, float]] = []
+
+    # all words from pdf concatenated
+    query: str = ' '.join([w['text'] for w in pdf_words])
+
+    word_occurrences: dict = dict()
+    search_from: int = 0
+
+    while sentences_str:
+
+        # sentence from xml that we want to find in the pdf
+        target: str = sentences_str.pop(0)
+
+        if target in word_occurrences:
+            word_occurrences[target] += 1
+        else:
+            word_occurrences[target] = 0
+
+        # adjust searching area while searching for the target sentence
+        query_limited: str = query[search_from:]
 
         # getting best match indexes
         # and adding idx_search_start to them, because we limited the search area
-        result = edlib.align(target, query, task="path", mode="HW")
+        result = edlib.align(target, query_limited, task="path", mode="HW")
 
-        # if the similarity is less than 0.9, we skip the note
         similarity = max(1 - result['editDistance'] / len(target), 0)
-        # if similarity < 0.78:
-        #    continue
 
-        # save the location of the note that we are 100% sure that we found the right ones
-        try:
-            #i = note_occurrences.get(target, 0)
-            start = result['locations'][-1][0]
-            end = result['locations'][-1][-1]
+        # i = word_occurrences.get(target, 0)
+        # print(i)
+        best_match_start = search_from + result['locations'][0][0]
+        best_match_end = search_from + result['locations'][0][-1]
+        #print(
+        #    f'{target} -> {result["locations"]} -> {query[best_match_start:best_match_end]} -> {similarity}')
+        #print()
 
-            # count the number of "$" symbols in the query from the beginning to the start of the note
-            start_pdf = query[:start].count('$')
-            end_pdf = query[:end].count('$')
+        if similarity < 0.3:
+            raise Exception('Similarity is too low')
 
-            # remove the note from the pdf words
-            pdf_words = pdf_words[:start_pdf] + pdf_words[end_pdf:]
-            # update the query
-            query = query[:start] + query[end:]
+        search_from = best_match_end
 
-            print(f'{target} -> {start_pdf, end_pdf}')
+        # getting data for the bounding box for the target sentence
+        idx = 0
+        for word in pdf_words:
+            if best_match_start <= idx <= best_match_end:
+                bbxs.append((word['page_no'], word['x0'], word['top'], word['x1'], word['bottom']))
+            if idx >= best_match_end:
+                break
+            idx += len(word['text']) + 1
 
-            #notes_locations[target].append((best_match_start, best_match_end))
-        except Exception as e:
-            print(traceback.format_exc())
-
-            # remove target from notes_locations
-            #notes_locations.pop(target)
-
-
-    """
-    # get all of the notes locations
-    locations_to_remove: list[tuple[int, int]] = [loc for note in notes_locations.values() for loc in note]
-    locations_to_remove.sort(key=lambda x: x[0], reverse=True)
-
-    for start, end in locations_to_remove:
-        # count the number of "$" symbols in the query from the beginning to the start of the note
-        start_pdf = query[:start].count('$')
-        end_pdf = query[:end].count('$')
-
-        # remove the note from the pdf words
-        pdf_words = pdf_words[:start_pdf] + pdf_words[end_pdf:]
-        # update the query
-        query = query[:start] + query[end:]
-    """
-
-    return pdf_words
+    return bbxs
 
 
 def main():
+    # delete everything in the results folder
+    shutil.rmtree('./results', ignore_errors=True)
+
     script_reader: ScriptReader = ScriptReader(
         './testing_xml',
         './testing_pdf',
-        _idx=30
     )
 
     SUCCESSFUL: int = 0
@@ -283,79 +326,42 @@ def main():
 
         # get a list of sentence elements from xml and convert them to list of strings
         sentences_ET: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
-        sentences_str: list[str] = [get_text_from_element(sentence) for sentence in sentences_ET]
-
-        # get a list of note elements from xml and convert them to list of strings
-        notes_ET: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG, attributes=[None, {'type': 'speaker'}])
-        notes_str: list[str] = [get_text_from_element(note) for note in notes_ET]
+        sentences_str1: list[str] = [get_text_from_element(sentence) for sentence in sentences_ET]
+        sentences_str2: list[str] = [get_text_from_element(sentence) for sentence in sentences_ET]
 
         # get a list of all words in the pdf
-        pdf_words: list[dict] = get_words_from_pdf(pdf_file_path)
-        # remove notes from the pdf words
-        pdf_words = remove_notes_from_pdf_words(pdf_words, notes_str)
+        pdf_words1: list[dict] = get_words_from_pdf(pdf_file_path)
+        pdf_words2: list[dict] = get_words_from_pdf(pdf_file_path)
 
         bbxs: list[tuple[int, float, float, float, float]] = []
-
-        # all words from pdf concatenated
-        query: str = '$'.join([w['text'] for w in pdf_words])
-
-        word_occurrences: dict = dict()
-
         try:
-            while sentences_str:
-
-                # sentence from xml that we want to find in the pdf
-                target: str = sentences_str.pop(0)
-
-                if sentences_str:
-                    target += ' ' + sentences_str.pop(0)
-
-                if target in word_occurrences:
-                    word_occurrences[target] += 1
-                else:
-                    word_occurrences[target] = 0
-
-                # adjust searching area while searching for the target sentence
-
-                # getting best match indexes
-                # and adding idx_search_start to them, because we limited the search area
-                result = edlib.align(target, query, task="path", mode="HW")
-
-                similarity = max(1 - result['editDistance'] / len(target), 0)
-
-                i = word_occurrences.get(target, 0)
-                # print(i)
-                best_match_start = result['locations'][i][0]
-                best_match_end = result['locations'][i][-1]
-                # print(
-                #    f'{target} -> {best_match_start, best_match_end} -> {query[best_match_start:best_match_end]} -> {similarity}')
-
-                # getting data for the bounding box for the target sentence
-                idx = 0
-                for word in pdf_words:
-                    if best_match_start <= idx <= best_match_end:
-                        bbxs.append((word['page_no'], word['x0'], word['top'], word['x1'], word['bottom']))
-                    if idx >= best_match_end:
-                        break
-                    idx += len(word['text']) + 1
-
-            print(f'WORKS ON {pdf_file_path}')
+            bbxs: list[tuple[int, float, float, float, float]] = get_coordinates(pdf_words1, sentences_str1)
+            print(f'{idx}. WORKS ON: {pdf_file_path}')
             SUCCESSFUL += 1
         except Exception as e:
-            print(f'ERROR ON {pdf_file_path}')
-            print(traceback.format_exc())
-            UNSUCCESSFUL += 1
+            print(f'{idx} TRYING HARDER ON: {pdf_file_path}')
+            traceback.print_exc()
+            try:
+                bbxs: list[tuple[int, float, float, float, float]] = handle_exception(pdf_words2, sentences_str2)
+                print(f'{idx}. WORKS ON: {pdf_file_path}')
+                SUCCESSFUL += 1
+            except Exception as e:
+                print(f'{idx}. DOES NOT WORK ON: {pdf_file_path}')
+                traceback.print_exc()
+                UNSUCCESSFUL += 1
+
+                # copy the pdf file to the exceptions folder
+                shutil.copy(pdf_file_path, f'./exceptions/pdf/{os.path.basename(pdf_file_path)}')
+                shutil.copy(pdf_file_path, f'./exceptions/xml/{os.path.basename(xml_file_path)}')
+                continue
 
         # display the result
-        show_result(pdf_file_path, bbxs)
+        prepare_result(xml_file_path, pdf_file_path, bbxs)
 
-    """
-    print()
-    print(f'TOTAL: {SUCCESSFUL + UNSUCCESSFUL}')
+    # print the results
     print(f'SUCCESSFUL: {SUCCESSFUL}')
     print(f'UNSUCCESSFUL: {UNSUCCESSFUL}')
-    print(f'SUCCESSFUL: {SUCCESSFUL / (SUCCESSFUL + UNSUCCESSFUL) * 100}%')
-    """
+    print(f'%: {SUCCESSFUL / (SUCCESSFUL + UNSUCCESSFUL) * 100}')
 
 
 if __name__ == '__main__':
