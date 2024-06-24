@@ -95,38 +95,6 @@ roman_numeros = {'I.', 'II.', 'III.', 'IV.', 'V.', 'VI.', 'VII.', 'VIII.', 'IX.'
 BUFFER_LIMIT: int = 200
 
 
-def get_x_column_border_coordinate(pdf_words: list[dict]) -> float:
-    # get min x1 coordinate
-    min_x0 = min([word['x0'] for word in pdf_words])
-    # get max x1 coordinate
-    max_x1 = max([word['x1'] for word in pdf_words])
-
-    # get the middle between min x1 and max x1
-    middle = (min_x0 + max_x1) / 2
-
-    return middle
-
-
-def remove_header(pdf_words: list[dict]) -> list[dict]:
-    # get the first occurrence of the word that indicates the beginning of the session
-    session_begin_word = None
-    for word in pdf_words:
-        if word['text'].strip() in SESSION_START_GER.union(SESSION_START_SLO):
-            session_begin_word = word
-            break
-
-    # get bottom coordinate of the session begin word
-    BOTTOM = session_begin_word['bottom']
-    # get the middle of the page
-    MIDDLE = get_x_column_border_coordinate(pdf_words)
-
-    # sort words that are below the header in two columns
-    left_column_words = [word for word in pdf_words if word['x1'] < MIDDLE and word['bottom'] < BOTTOM]
-    right_column_words = [word for word in pdf_words if word['x0'] >= MIDDLE and word['bottom'] < BOTTOM]
-
-    return left_column_words + right_column_words
-
-
 def get_text_from_element(element: ET.Element) -> str:
     if element.tag == '{http://www.tei-c.org/ns/1.0}note':
         return element.text
@@ -221,6 +189,12 @@ def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
             # adding page no to each word
             page_words = [{'page_no': page_no, **word} for word in page_words]
 
+            # add words from the page to the list of all words in the pdf
+            all_pdf_words.extend(page_words)
+
+            if not remove_titles:
+                continue
+
             page_words_wanted = []
             page_words_excluded = []
 
@@ -249,7 +223,6 @@ def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
                         page_words_excluded = ' '.join(
                             [w['text'] for w in page_words if w['top'] <= first_word['bottom']])
 
-            all_pdf_words.extend(page_words)
             if page_words_excluded:
                 pdf_words_excluded.append(page_words_excluded)
 
@@ -313,39 +286,6 @@ def is_last_sentence(sentence: str):
     return False
 
 
-def remove_excluded_words(sentence: str, excluded_words: list[str]) -> str:
-    PATTERN_REMOVE_PAGE_NUMBERS = r'\b\d{3}\b'
-    PATTERN_REMOVE_UNNECESSARY_SPACES = r'\s{2,}'
-
-    sentence = sentence.replace('—', '')
-    sentence = sentence.strip()
-
-    for excluded_word in excluded_words:
-        if type(excluded_word) == list:
-            continue
-
-        slo_excluded_words = excluded_word.split('—')[0]
-        slo_excluded_words = re.sub(PATTERN_REMOVE_PAGE_NUMBERS, '', slo_excluded_words)
-        slo_excluded_words = re.sub(PATTERN_REMOVE_UNNECESSARY_SPACES, '', slo_excluded_words)
-        slo_excluded_words = slo_excluded_words.replace('.', '\.')
-        slo_excluded_words = slo_excluded_words.strip()
-
-        ger_excluded_words = excluded_word.split('—')[-1]
-        ger_excluded_words = re.sub(PATTERN_REMOVE_PAGE_NUMBERS, '', ger_excluded_words)
-        ger_excluded_words = re.sub(PATTERN_REMOVE_UNNECESSARY_SPACES, '', ger_excluded_words)
-        ger_excluded_words = re.sub(r'm|n', '[m|n]', ger_excluded_words)
-        ger_excluded_words = ger_excluded_words.replace('.', '\.')
-        ger_excluded_words = ger_excluded_words.strip()
-
-        if re.search(slo_excluded_words, sentence):
-            sentence = re.sub(slo_excluded_words, '', sentence)
-
-        if re.search(ger_excluded_words, sentence):
-            sentence = re.sub(ger_excluded_words, '', sentence)
-
-    return sentence
-
-
 def contains_excluded_words(query: str, regex_patterns_excluded_words: list[str]) -> bool:
     for pattern in regex_patterns_excluded_words:
         try:
@@ -361,6 +301,41 @@ def contains_excluded_words(query: str, regex_patterns_excluded_words: list[str]
 def rreplace(s, old, new, occurrence):
     li = s.rsplit(old, occurrence)
     return new.join(li)
+
+
+def get_volume_from_pdf_name(pdf_name: str) -> int:
+    volume = pdf_name.split('-')[2]
+
+    if 'p' in volume:
+        volume = volume.split('p')[0]
+        return int(volume)
+
+    return int(volume)
+
+
+def get_start_and_end_note(notes_ET: list[ET.Element]) -> tuple[str, str]:
+    notes_str: list[str] = [get_text_from_element(note) for note in notes_ET]
+
+    # we get last note which is hopefully on the last page
+    # we use them to get rid of the noise at the end of the pdf, but keep the words
+    # on the last page that are part of the session content
+    session_end_note: str = notes_str[-1]
+
+    # notes that have type time and are in German
+    notes_ET_time = list(
+        filter(lambda n: 'type' in n.attrib and n.attrib['type'] == 'time' and \
+                         '{http://www.w3.org/XML/1998/namespace}lang' in n.attrib and \
+                         n.attrib['{http://www.w3.org/XML/1998/namespace}lang'] == 'de',
+               notes_ET)
+    )
+
+    notes_str_time: list[str] = [get_text_from_element(note) for note in notes_ET_time]
+
+    # get GER note that indicates beginning of the session content
+    # we always select the GER one because after the GER note there is always session content
+    session_start_note: str = notes_str_time[0] if notes_str_time else notes_str[0]
+
+    return session_start_note, session_end_note
 
 
 def get_match_positions(query: str, regex_patterns_excluded_words: list[str]) -> tuple[int, int]:
@@ -612,18 +587,18 @@ def get_bbxs(pdf_words: list[dict], idx_start: int, idx_end: int) -> list[tuple[
     return bbxs
 
 
-def remove_titles(pdf_words: list[dict], sentences_ET: list[ET.Element], regex_patterns_excluded_words: list[str]) -> \
+def remove_titles(pdf_words: list[dict], elements_ET: list[ET.Element], regex_patterns_excluded_words: list[str]) -> \
         list[dict]:
     query: str = ' '.join([w['text'] for w in pdf_words])
 
-    best_match_end: int = 0
+    result = edlib.align(get_text_from_element(elements_ET[0]), query, task="path", mode="HW")
 
-    result = {'locations': []}
+    best_match_end: int = 0
     search_area_start: int = 0
 
-    while sentences_ET:
+    while elements_ET:
         # get sentence as string from the sentence element
-        target: str = get_text_from_element(sentences_ET.pop(0))
+        target: str = get_text_from_element(elements_ET.pop(0))
 
         # handle titles that are broken into 2 sentences
 
@@ -672,17 +647,17 @@ def remove_titles(pdf_words: list[dict], sentences_ET: list[ET.Element], regex_p
     return pdf_words
 
 
-def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element]) -> \
+def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element], align: bool) -> \
         list[tuple[int, float, float, float, float]]:
     bbxs: list[tuple[int, float, float, float, float]] = []
 
     query: str = ' '.join([w['text'] for w in pdf_words])
 
-    best_match_start: int = 0
-    best_match_end: int = 0
-
-    result = {'locations': []}
-    search_area_start: int = 0
+    result = edlib.align(get_text_from_element(elements_ET[0]), query, task="path", mode="HW")
+    if align:
+        best_match_end: int = result['locations'][0][0]
+    else:
+        best_match_end: int = 0
 
     while elements_ET:
         # get element as string
@@ -708,7 +683,7 @@ def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element
 
             similarity_prev = similarity_curr
             similarity_curr = 1 - result['editDistance'] / len(target)
-            BUFFER += 1
+            BUFFER += 2
 
             # print(similarity_curr)
             # print(search_area_start, search_area_end)
@@ -793,8 +768,10 @@ def main():
     # shutil.rmtree('./results', ignore_errors=True)
 
     script_reader: ScriptReader = ScriptReader(
-        './testing_xml',
-        './testing_pdf',
+        './all_xml',
+        './all_pdf',
+        _from=320,
+        _to=350
     )
 
     SUCCESSFUL: int = 0
@@ -805,41 +782,35 @@ def main():
 
         # get a list of note elements from xml
         notes_ET: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG)
-        notes_str: list[str] = [get_text_from_element(note) for note in notes_ET]
+        # get session start and end notes (to remove header and noise at the end)
+        session_start_note, session_end_note = get_start_and_end_note(notes_ET)
 
-        # we get last note which is hopefully on the last page
-        # we use them to get rid of the noise at the end of the pdf, but keep the words
-        # on the last page that are part of the session content
-        session_end_note: str = notes_str[-1]
-
-        # notes that have type time and are in German
-        notes_ET_time = list(
-            filter(lambda n: 'type' in n.attrib and n.attrib['type'] == 'time' and \
-                             '{http://www.w3.org/XML/1998/namespace}lang' in n.attrib and \
-                             n.attrib['{http://www.w3.org/XML/1998/namespace}lang'] == 'de',
-                   notes_ET)
-        )
-
-        notes_str_1: list[str] = [get_text_from_element(note) for note in notes_ET_time]
-
-        # get GER note that indicates beginning of the session content
-        # we always select the GER one because after the GER note there is always session content
-        session_start_note: str = notes_str_1[0] if notes_str_1 else notes_str[0]
-
-        # get a list of sentence elements from xml and convert them to list of strings
-        # and remove firs note elements that indicate time
+        # kepp only et elements that are after first ger time note
+        notes_ET_time: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG, attributes=[
+            {'type': 'time'},
+            {'{http://www.w3.org/XML/1998/namespace}lang': 'de'},
+        ])
         sentences_ET1: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
         i_from = sentences_ET1.index(notes_ET_time[0])
         sentences_ET1 = sentences_ET1[i_from + 1:]
-        sentences_ET2: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)[2:]
+        sentences_ET2: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
         sentences_ET2 = sentences_ET2[i_from + 1:]
 
         # get a list of all words in the pdf
-        pdf_words1, pdf_words_excluded1 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note)
-        pdf_words2, pdf_words_excluded2 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note)
+        has_titles: bool = False
+        if get_volume_from_pdf_name(os.path.basename(pdf_file_path)) >= 24:
+            has_titles = True
+
+        align = False
+        if get_volume_from_pdf_name(os.path.basename(pdf_file_path)) < 8:
+            align = True
+
+        pdf_words1, titles1 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note, has_titles)
+        pdf_words2, titles2 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note, has_titles)
 
         excluded_titles_full, excluded_titles_slo, excluded_titles_ger = make_regex_for_excluded_words1(
-            pdf_words_excluded2)
+            titles2
+        )
 
         try:
             bbxs = search_for_words_all(pdf_words1, sentences_ET1)
@@ -861,7 +832,7 @@ def main():
                 pdf_words2 = remove_titles(pdf_words2, s2, excluded_titles_slo)
                 pdf_words2 = remove_titles(pdf_words2, s3, excluded_titles_ger)
 
-                bbxs = search_for_words_limited(pdf_words2, s4)
+                bbxs = search_for_words_limited(pdf_words2, s4, align)
                 print(f'{idx}. WORKS ON: {pdf_file_path}')
                 SUCCESSFUL += 1
 
