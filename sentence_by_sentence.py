@@ -1,6 +1,7 @@
 import os.path
 import re
 import shutil
+import sys
 import traceback
 import xml.etree.ElementTree as ET
 
@@ -14,11 +15,14 @@ from XMLEditor import XMLEditor
 SENTENCE_TAG: list[str] = ['s', 'note']
 SENTENCE_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in SENTENCE_TAG]
 # tags of word elements that contain text
-WORD_TAG: list[str] = ['w', 'pc']
+WORD_TAG: list[str] = ['w', 'pc', 'note']
 WORD_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in WORD_TAG]
 # tags of elements that should be ignored (metadata)
 NOTE_TAG: list[str] = ['note']
 NOTE_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in NOTE_TAG]
+# tags for segments
+SEGMENT_TAG: list[str] = ['seg']
+SEGMENT_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in SEGMENT_TAG]
 
 CAHRS_THAT_INDICATE_NEW_LINE: set[str] = {'­', '-', '—', '*'}
 CAHRS_THAT_INDICATE_END_OF_SENTENCE: set[str] = {'.', '?', '!'}
@@ -171,68 +175,31 @@ def prepare_result1(xml_path: str, pdf_path: str) -> None:
         image.save(os.path.join(folder, f'{file_name}_{idx}.png'))
 
 
-def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str, remove_titles: bool = False) -> \
-        tuple[list[dict], list[str]]:
+def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str) -> list[dict]:
     # list that will store all words in the pdf
     all_pdf_words: list[dict] = []
-    pdf_words_excluded: list[str] = []
     with pdfplumber.open(pdf_path) as pdf:
         # iterating through pages and getting all words on each page
         for page_no, pdf_page in enumerate(pdf.pages):
             # get all words based on PDF's underlying flow of characters
-            page_words: list[dict] = pdf_page.extract_words(use_text_flow=True, x_tolerance=10)
+            page_words: list[dict] = pdf_page.extract_words(use_text_flow=True, x_tolerance=7)
 
             # skipping pages with no words
             if not page_words:
                 continue
 
             # adding page no to each word
-            page_words = [{'page_no': page_no, **word} for word in page_words]
-
+            page_words: list[dict] = [{'page_no': page_no, **word} for word in page_words]
             # add words from the page to the list of all words in the pdf
             all_pdf_words.extend(page_words)
 
-            if not remove_titles:
-                continue
-
-            page_words_wanted = []
-            page_words_excluded = []
-
-            # save title at the top of the page
-            words = [w['text'].strip() for w in page_words]
-            text = ' '.join([w['text'].strip() for w in page_words])
-            first_word = page_words[0]
-            second_word = page_words[1] if len(page_words) > 1 else None
-
-            for n in roman_numeros:
-                if n in first_word['text'] or (second_word and n in second_word['text']):
-                    rest_of_text = text.strip()[text.strip().find(n) + len(n):].lower().replace(' ', '')
-                    if len(words) > 4 and n in words[4:]:
-                        # keep only words that have top coordinate lower that bottom coordinate of first word
-                        page_words_excluded = ' '.join(
-                            [w['text'] for w in page_words if w['top'] <= first_word['bottom']])
-
-                    if "sitzungun" in rest_of_text or "sejadne" in rest_of_text or "sitzungam" in rest_of_text or "sitzungmn" in rest_of_text or "sitzungant" in rest_of_text or "sitzungnm" in rest_of_text:
-                        # keep only words that have top coordinate lower that bottom coordinate of first word
-                        page_words_excluded = ' '.join(
-                            [w['text'] for w in page_words if w['top'] <= first_word['bottom']])
-
-                    part2 = text.strip().split(chr(8212))  # U+8212 je Em Dash (pomišljaj)
-                    if len(part2) > 1 and part2[1].strip().startswith(n):
-                        # keep only words that have top coordinate lower that bottom coordinate of first word
-                        page_words_excluded = ' '.join(
-                            [w['text'] for w in page_words if w['top'] <= first_word['bottom']])
-
-            if page_words_excluded:
-                pdf_words_excluded.append(page_words_excluded)
-
-    # make query
+    # join all words in the pdf to get the query string
     query: str = ' '.join([w['text'] for w in all_pdf_words])
 
-    # get index of the start of the session
+    # get index of words that indicate the start of the session content
     results_start: dict = edlib.align(start_of_session, query, task="path", mode="HW")
     idx_from: int = results_start['locations'][0][-1]
-
+    # get index of words that indicate the start of the session content
     results_end: dict = edlib.align(end_of_session, query, task="path", mode="HW")
     idx_to: int = results_end['locations'][-1][-1]
 
@@ -244,8 +211,9 @@ def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
             last_page_of_content = word['page_no']
         idx += len(word['text']) + 1
 
-    # filter words that are between the start and the end of the session
-    # to remove the header at the start of the pdf and noise at the end of the pdf
+    # filter words that are in between the start and end of the session content
+    # or are on the last page of the session content
+    # we do this to remove the header at the start of the pdf and noise at the end of the pdf
     pdf_words_wanted: list = []
     idx: int = 0
     for word in all_pdf_words:
@@ -255,26 +223,12 @@ def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
 
         idx += len(word['text']) + 1
 
-    return pdf_words_wanted, pdf_words_excluded
+    return pdf_words_wanted
 
 
 def get_len_of_next_n_words(query: str, idx: int, n: int) -> int:
     words = query[idx:].split(' ')
     return sum([len(word) + 1 for word in words[:n]])
-
-
-def get_len_of_next_sentence(query: str, idx: int) -> int:
-    words = query[idx:].split(' ')
-    s = 0
-    for word in words:
-        # check if the word contains a character that indicates the end of the sentence
-        if any(char in word for char in CAHRS_THAT_INDICATE_END_OF_SENTENCE):
-            s += len(word) + 1
-            break
-
-        s += len(word) + 1
-
-    return s
 
 
 def is_last_sentence(sentence: str):
@@ -284,33 +238,6 @@ def is_last_sentence(sentence: str):
             return True
 
     return False
-
-
-def contains_excluded_words(query: str, regex_patterns_excluded_words: list[str]) -> bool:
-    for pattern in regex_patterns_excluded_words:
-        try:
-            if re.search(pattern, query):
-                return True
-        except:
-            print(f'Error in regex pattern {pattern}')
-            continue
-
-    return False
-
-
-def rreplace(s, old, new, occurrence):
-    li = s.rsplit(old, occurrence)
-    return new.join(li)
-
-
-def get_volume_from_pdf_name(pdf_name: str) -> int:
-    volume = pdf_name.split('-')[2]
-
-    if 'p' in volume:
-        volume = volume.split('p')[0]
-        return int(volume)
-
-    return int(volume)
 
 
 def get_start_and_end_note(notes_ET: list[ET.Element]) -> tuple[str, str]:
@@ -336,119 +263,6 @@ def get_start_and_end_note(notes_ET: list[ET.Element]) -> tuple[str, str]:
     session_start_note: str = notes_str_time[0] if notes_str_time else notes_str[0]
 
     return session_start_note, session_end_note
-
-
-def get_match_positions(query: str, regex_patterns_excluded_words: list[str]) -> tuple[int, int]:
-    for pattern in regex_patterns_excluded_words:
-        match = re.search(pattern, query)
-        if match:
-            return match.start(), match.end()
-
-    return -1, -1
-
-
-def make_regex_for_excluded_words(excluded_words: list[str]) -> tuple[list[str], list[str], list[str]]:
-    patterns_full: list[str] = []
-    patterns_slo: list[str] = []
-    patterns_ger: list[str] = []
-
-    for excluded_word in excluded_words:
-
-        full_excluded_words_pattern = excluded_word.strip()
-        full_excluded_words_pattern = full_excluded_words_pattern.replace('.', r'\.')
-        if '-' in full_excluded_words_pattern:
-            full_excluded_words_pattern = full_excluded_words_pattern.replace('-', r'(-|—)?')
-        elif '—' in full_excluded_words_pattern:
-            full_excluded_words_pattern = full_excluded_words_pattern.replace('—', r'(-|—)?')
-        full_excluded_words_pattern = full_excluded_words_pattern.replace('am', r'a(m|n)')
-        full_excluded_words_pattern = full_excluded_words_pattern.replace('ant', r'a(m|n)t?')
-        full_excluded_words_pattern = re.sub(r'\s+', ' ', full_excluded_words_pattern)
-        full_excluded_words_pattern = full_excluded_words_pattern.replace(' ', r'\s+')
-
-        slo_excluded_words = ' '.join(excluded_word.split(' ')[:7]).strip()
-        slo_excluded_words = slo_excluded_words.replace('.', r'\.')
-        slo_excluded_words = re.sub(r'\s+', ' ', slo_excluded_words)
-        slo_excluded_words = slo_excluded_words.replace(' ', r'\s+')
-
-        ger_excluded_words = ' '.join(excluded_word.split(' ')[7:]).strip()
-        ger_excluded_words = ger_excluded_words.replace('am', r'a(m|n)')
-        ger_excluded_words = ger_excluded_words.replace('ant', r'a(m|n)t?')
-        ger_excluded_words = ger_excluded_words.replace('.', r'\.')
-        ger_excluded_words = re.sub(r'\s+', ' ', ger_excluded_words)
-        ger_excluded_words = ger_excluded_words.replace(' ', r'\s+')
-
-        patterns_full.append(full_excluded_words_pattern)
-        patterns_slo.append(slo_excluded_words)
-        patterns_ger.append(ger_excluded_words)
-
-    return patterns_full, patterns_slo, patterns_ger
-
-
-def make_regex_for_excluded_words1(excluded_words: list[str]) -> tuple[list[str], list[str], list[str]]:
-    patterns: list[str] = []
-    patterns_slo: list[str] = []
-    patterns_ger: list[str] = []
-
-    for i, excluded_word in enumerate(excluded_words):
-
-        if '—' in excluded_word and len(excluded_word.strip().split('—')) >= 2:
-            words = excluded_word.split(' ')
-            pattern = ' '.join(words[:2]).replace('.', r'\.') + r'.+' + \
-                      ' '.join(words[-3:]).replace('.', r'\.?')
-
-            front_words = excluded_word.split('—')[0].strip().split(' ')
-            back_words = excluded_word.split('—')[-1].strip().split(' ')
-            pattern_slo = ' '.join(front_words[:2]).replace('.', r'\.') + r'.+' + ' '.join(front_words[-3:]).replace(
-                '.', r'\.?')
-            pattern_ger = ' '.join(back_words[:2]).replace('.', r'\.') + r'.+' + \
-                          ' '.join(back_words[-3:]).replace('.', r'\.?')
-
-            pattern_ger = rreplace(pattern_ger, r'\.? ', r'\.?|', 1)
-
-            patterns.append(pattern)
-            patterns_slo.append(pattern_slo)
-            patterns_ger.append(pattern_ger)
-
-        elif '-' in excluded_word and len(excluded_word.strip().split('-')) >= 2:
-            words = excluded_word.split(' ')
-            pattern = ' '.join(words[:2]).replace('.', r'\.') + r'.+' + \
-                      ' '.join(words[-3:]).replace('.', r'\.?')
-
-            front_words = excluded_word.split('-')[0].strip().split(' ')
-            back_words = excluded_word.split('-')[-1].strip().split(' ')
-            pattern_slo = ' '.join(front_words[:2]).replace('.', r'\.') + r'.+' + ' '.join(front_words[-3:]).replace(
-                '.', r'\.?')
-            pattern_ger = ' '.join(back_words[:2]).replace('.', r'\.') + r'.+' + \
-                          ' '.join(back_words[-3:]).replace('.', r'\.?')
-
-            pattern_ger = rreplace(pattern_ger, r'\.? ', r'\.?|', 1)
-
-            patterns.append(pattern)
-            patterns_slo.append(pattern_slo)
-            patterns_ger.append(pattern_ger)
-
-        else:
-            words = excluded_word.split(' ')
-            pattern = ' '.join(words[:2]).replace('.', r'\.') + r'.+' + \
-                      ' '.join(words[-3:]).replace('.', r'\.?')
-
-            pattern = rreplace(pattern, r'\.? ', r'\.?|', 1)
-
-            patterns.append(pattern)
-
-            # get me the idx of 3 digit number
-            match = re.search(r'\b\d{1,3}\b', excluded_word)
-            i_start = match.start()
-            if i_start >= 7:
-                back_words = excluded_word[6:].split(' ')
-                pattern_ger = ' '.join(back_words[:2]).replace('.', r'\.') + r'.+' + \
-                              ' '.join(back_words[-3:]).replace('.', r'\.?')
-
-                pattern_ger = rreplace(pattern_ger, r'\.? ', r'\.?|', 1)
-
-                patterns_ger.append(pattern_ger)
-
-    return patterns, patterns_slo, patterns_ger
 
 
 def add_coordinates_to_xml(idx_start: int, idx_end: int, pdf_words: list[dict], sentence: ET.Element,
@@ -568,6 +382,38 @@ def remove_from_pdf_words(pdf_words: list[dict], idx_start: int, idx_end: int) -
     return new_pdf_words
 
 
+def remove_from_pdf_words1(pdf_words: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
+    # removes words from idx_start to idx_end
+    new_pdf_words: list[dict] = []
+    idx: int = 0
+    for i, word in enumerate(pdf_words):
+        if any([position[0] <= idx <= position[1] for position in positions]):
+            print(word['text'])
+        else:
+            new_pdf_words.append(word)
+
+        idx += len(word['text']) + 1
+
+    return new_pdf_words
+
+
+def keep_in_pdf_words(pdf_words: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
+    # keeps words from idx_start to idx_end
+    new_pdf_words: list[dict] = []
+    idx: int = 0
+    for i, word in enumerate(pdf_words):
+
+        # keep only words which positions are in the positions list
+        if any([position[0] <= idx <= position[1] for position in positions]):
+            new_pdf_words.append(word)
+        else:
+            print(word['text'])
+
+        idx += len(word['text']) + 1
+
+    return new_pdf_words
+
+
 def get_bbxs(pdf_words: list[dict], idx_start: int, idx_end: int) -> list[tuple[int, float, float, float, float]]:
     # getting data for the bounding box for the target sentence
     bbxs: list[tuple[int, float, float, float, float]] = []
@@ -587,77 +433,14 @@ def get_bbxs(pdf_words: list[dict], idx_start: int, idx_end: int) -> list[tuple[
     return bbxs
 
 
-def remove_titles(pdf_words: list[dict], elements_ET: list[ET.Element], regex_patterns_excluded_words: list[str]) -> \
-        list[dict]:
-    query: str = ' '.join([w['text'] for w in pdf_words])
-
-    result = edlib.align(get_text_from_element(elements_ET[0]), query, task="path", mode="HW")
-
-    best_match_end: int = 0
-    search_area_start: int = 0
-
-    while elements_ET:
-        # get sentence as string from the sentence element
-        target: str = get_text_from_element(elements_ET.pop(0))
-
-        # handle titles that are broken into 2 sentences
-
-        similarity_curr: float = 0
-        similarity_prev: float = -1
-        BUFFER: int = 4
-
-        while similarity_prev < similarity_curr:
-            # adjust searching area while searching for the target sentence
-            search_area_start = best_match_end
-            search_area_end = search_area_start + len(target) + get_len_of_next_n_words(query,
-                                                                                        search_area_start,
-                                                                                        BUFFER)
-
-            query_limited: str = query[search_area_start:search_area_end]
-
-            # print('QUERY:', query_limited)
-            # print('TARGET:', target)
-            # print()
-
-            if contains_excluded_words(query_limited, regex_patterns_excluded_words) and \
-                    not contains_excluded_words(target, regex_patterns_excluded_words):
-                start_excluded, end_excluded = get_match_positions(query_limited,
-                                                                   regex_patterns_excluded_words)
-
-                pdf_words = remove_from_pdf_words(pdf_words, search_area_start + start_excluded,
-                                                  search_area_start + end_excluded)
-
-                query = ' '.join([w['text'] for w in pdf_words])
-
-                query_limited: str = query[search_area_start:search_area_end]
-
-            # getting best match indexes
-            # and adding idx_search_start to them, because we limited the search area
-            result = edlib.align(target, query_limited, task="path", mode='HW')
-
-            similarity_prev = similarity_curr
-            similarity_curr = 1 - result['editDistance'] / len(target)
-
-        best_match_end: int = search_area_start + result['locations'][0][-1] + 1
-
-        # stop when reaching the end of the session content
-        if best_match_end == len(query) - 1:
-            break
-
-    return pdf_words
-
-
-def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element], align: bool) -> \
+def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element]) -> \
         list[tuple[int, float, float, float, float]]:
     bbxs: list[tuple[int, float, float, float, float]] = []
 
     query: str = ' '.join([w['text'] for w in pdf_words])
 
     result = edlib.align(get_text_from_element(elements_ET[0]), query, task="path", mode="HW")
-    if align:
-        best_match_end: int = result['locations'][0][0]
-    else:
-        best_match_end: int = 0
+    best_match_end: int = 0
 
     while elements_ET:
         # get element as string
@@ -763,15 +546,90 @@ def search_for_words_all(pdf_words: list[dict], sentences_ET: list[ET.Element]) 
     return bbxs
 
 
+def get_locations_to_remove(s: str, min_length: int) -> list[tuple[int, int]]:
+    """
+    This function gets the locations of the matched words in the alignment.
+
+    :param min_length:
+    :param s:
+    :return:
+    """
+    sequences = []
+    start = None  # To mark the start of a sequence of '-'
+    noise_count = 0  # To count the '|' characters within a sequence
+
+    for i, char in enumerate(s):
+        if char == '-':
+            if start is None:
+                start = i  # Mark the start of a sequence
+                noise_count = 0  # Reset noise count
+        else:
+            if start is not None:
+                noise_count += 1  # Increment noise count
+
+                if all([c != '-' for c in s[i + 1:i + 1 + 5]]):
+                    if (i - noise_count) - start >= min_length:
+                        sequences.append((start, i - noise_count + 1))  # End of a sequence
+                    start = None
+
+    if start is not None and (len(s) - noise_count) - start >= min_length:
+        sequences.append((start, len(s)))
+
+    return sequences
+
+
+def align(pdf_words: list[dict], elements_ET: list[ET.Element]) -> list[dict]:
+    """
+    Purpose of this function is to make texts from pdf and xml as similar as possible by removing
+    any text from the pdf that is not in the xml, therefore making the alignment of the texts easier.
+
+    :param pdf_words:
+    :param elements_ET:
+    :return:
+    """
+    words = []
+    for sentence in elements_ET:
+        if sentence.tag == '{http://www.tei-c.org/ns/1.0}note':
+            words.append(sentence)
+        else:
+            words.extend([child for child in sentence])
+
+    target: str = ''.join([get_text_from_element(word) for word in words])
+    target = re.sub(r'\s+', '', target)
+
+    # all words from pdf concatenated into  query
+    query: str = ''.join([w['text'] for w in pdf_words])
+    query = re.sub(r'\s+', '', query)
+
+    # print(target)
+
+    # print(query)
+
+    # print()
+
+    result = edlib.align(target, query, task="path", mode="NW")
+    nice = edlib.getNiceAlignment(result, target, query)
+
+    locations = get_locations_to_remove(nice['matched_aligned'], 10)
+
+    for s, e in locations:
+        print(s, e)
+        print(query[s:e])
+        print()
+
+    sys.exit()
+
+    return pdf_words
+
+
 def main():
     # delete everything in the results folder
     # shutil.rmtree('./results', ignore_errors=True)
 
     script_reader: ScriptReader = ScriptReader(
-        './all_xml',
-        './all_pdf',
-        _from=320,
-        _to=350
+        './exceptions_test/xml',
+        './exceptions_test/pdf',
+        _idx=250
     )
 
     SUCCESSFUL: int = 0
@@ -779,6 +637,8 @@ def main():
 
     for idx, (xml_file_path, pdf_file_path) in enumerate(script_reader.group_xml_pdf()):
         xml_editor: XMLEditor = XMLEditor(xml_file_path)
+
+        print(f'PROCESSING: {pdf_file_path}')
 
         # get a list of note elements from xml
         notes_ET: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG)
@@ -794,25 +654,13 @@ def main():
         i_from = sentences_ET1.index(notes_ET_time[0])
         sentences_ET1 = sentences_ET1[i_from + 1:]
         sentences_ET2: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
-        sentences_ET2 = sentences_ET2[i_from + 1:]
+        sentences_ET2 = sentences_ET2[i_from + 2:]
 
-        # get a list of all words in the pdf
-        has_titles: bool = False
-        if get_volume_from_pdf_name(os.path.basename(pdf_file_path)) >= 24:
-            has_titles = True
-
-        align = False
-        if get_volume_from_pdf_name(os.path.basename(pdf_file_path)) < 8:
-            align = True
-
-        pdf_words1, titles1 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note, has_titles)
-        pdf_words2, titles2 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note, has_titles)
-
-        excluded_titles_full, excluded_titles_slo, excluded_titles_ger = make_regex_for_excluded_words1(
-            titles2
-        )
+        pdf_words1 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note)
+        pdf_words2 = align(pdf_words1[:], sentences_ET2)
 
         try:
+            raise Exception('Test')
             bbxs = search_for_words_all(pdf_words1, sentences_ET1)
 
             print(f'{idx}. WORKS ON: {pdf_file_path}')
@@ -823,16 +671,8 @@ def main():
             print(f'{idx} TRYING HARDER ON: {pdf_file_path}')
 
             try:
-                s1 = sentences_ET2[:]
-                s2 = sentences_ET2[:]
-                s3 = sentences_ET2[:]
-                s4 = sentences_ET2[:]
+                bbxs = search_for_words_limited(pdf_words2, sentences_ET2)
 
-                pdf_words2 = remove_titles(pdf_words2, s1, excluded_titles_full)
-                pdf_words2 = remove_titles(pdf_words2, s2, excluded_titles_slo)
-                pdf_words2 = remove_titles(pdf_words2, s3, excluded_titles_ger)
-
-                bbxs = search_for_words_limited(pdf_words2, s4, align)
                 print(f'{idx}. WORKS ON: {pdf_file_path}')
                 SUCCESSFUL += 1
 
@@ -857,7 +697,7 @@ def main():
     # print the results
     print(f'SUCCESSFUL: {SUCCESSFUL}')
     print(f'UNSUCCESSFUL: {UNSUCCESSFUL}')
-    # print(f'%: {SUCCESSFUL / (SUCCESSFUL + UNSUCCESSFUL) * 100}')
+    print(f'%: {SUCCESSFUL / (SUCCESSFUL + UNSUCCESSFUL) * 100}')
 
 
 if __name__ == '__main__':
