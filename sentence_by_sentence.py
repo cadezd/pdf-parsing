@@ -1,7 +1,6 @@
 import os.path
 import re
 import shutil
-import sys
 import traceback
 import xml.etree.ElementTree as ET
 
@@ -24,7 +23,7 @@ NOTE_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in NOTE_TAG
 SEGMENT_TAG: list[str] = ['seg']
 SEGMENT_TAG: list[str] = ['{http://www.tei-c.org/ns/1.0}' + tag for tag in SEGMENT_TAG]
 
-CAHRS_THAT_INDICATE_NEW_LINE: set[str] = {'­', '-', '—', '*'}
+CAHRS_THAT_INDICATE_NEW_LINE: set[str] = {'­', '-', ''}
 CAHRS_THAT_INDICATE_END_OF_SENTENCE: set[str] = {'.', '?', '!'}
 
 SESSION_START_GER: set = {"Beginn", "Deginn", "Keginn", "Jeginn", "Heginn", "Begimi",
@@ -96,7 +95,12 @@ roman_numeros = {'I.', 'II.', 'III.', 'IV.', 'V.', 'VI.', 'VII.', 'VIII.', 'IX.'
                  'XXI.', 'XXII.', 'XXIII.', 'XXIV.', 'XXV.', 'XXVI.', 'XXVII.', 'XXVIII.', 'XXIX.', 'XXX.',
                  'XXXI.', 'XXXII.', 'XXXIII.', 'XXXIV.', 'XXXV.', 'XXXVI.', 'XXXVII.', 'XXXVIII.', 'XXXIX.', 'XL.'}
 
-BUFFER_LIMIT: int = 200
+ADDIDIONAL_EQUALITIES: list[tuple[str, str]] = [
+    ('m', 'n'), ('n', 'm'),
+    ('>', 'i'),
+    ('U', 'a'), ('a', 'U'),
+    ('A', 'a'), ('a', 'A')
+]
 
 
 def get_text_from_element(element: ET.Element) -> str:
@@ -135,6 +139,7 @@ def prepare_result(xml_path: str, pdf_path: str, bbxs: list[tuple[int, float, fl
 
 
 def prepare_result1(xml_path: str, pdf_path: str) -> None:
+    print('PREPARING RESULT for xml:', xml_path)
     xml_editor = XMLEditor(xml_path)
     elements_ET = xml_editor.get_elements_by_tags(WORD_TAG)
 
@@ -149,81 +154,90 @@ def prepare_result1(xml_path: str, pdf_path: str) -> None:
             images.append(page.to_image(resolution=150))
 
     for element in elements_ET:
-        if 'x0' not in element.attrib:
-            continue
+        try:
+            if 'x0' not in element.attrib:
+                continue
 
-        x0 = float(element.attrib['x0'])
-        y0 = float(element.attrib['y0'])
-        x1 = float(element.attrib['x1'])
-        y1 = float(element.attrib['y1'])
-        fromPage = int(element.attrib['fromPage'])
-
-        images[fromPage].draw_rect((x0, y0, x1, y1), stroke_width=1)
-
-        isBroken: bool = element.attrib['isBroken'] == 'true'
-        if isBroken:
+            fromPage = int(element.attrib['fromPage'])
             toPage = int(element.attrib['toPage'])
-            x2 = float(element.attrib['x2'])
-            y2 = float(element.attrib['y2'])
-            x3 = float(element.attrib['x3'])
-            y3 = float(element.attrib['y3'])
 
-            images[toPage].draw_rect((x2, y2, x3, y3), stroke_width=1)
+            for i, j in zip(range(0, 10, 2), range(1, 11, 2)):
+                if f'x{i}' not in element.attrib or f'y{i}' not in element.attrib:
+                    break
+
+                if f'x{j}' not in element.attrib or f'y{j}' not in element.attrib:
+                    break
+
+                x0 = float(element.attrib[f'x{i}'])
+                y0 = float(element.attrib[f'y{i}'])
+                x1 = float(element.attrib[f'x{j}'])
+                y1 = float(element.attrib[f'y{j}'])
+
+                page_num = fromPage if i <= 0 and j <= 1 else toPage
+
+                images[page_num].draw_rect((
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                ), stroke_width=1)
+
+
+        except Exception as e:
+            print('Problem with:', element.text)
+            continue
 
     # save the images with the bounding boxes in the folder
     for idx, image in enumerate(images):
         image.save(os.path.join(folder, f'{file_name}_{idx}.png'))
 
 
-def get_words_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str) -> list[dict]:
+def get_chars_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str) -> list[dict]:
     # list that will store all words in the pdf
-    all_pdf_words: list[dict] = []
+    all_pdf_chars: list[dict] = []
     with pdfplumber.open(pdf_path) as pdf:
         # iterating through pages and getting all words on each page
         for page_no, pdf_page in enumerate(pdf.pages):
-            # get all words based on PDF's underlying flow of characters
-            page_words: list[dict] = pdf_page.extract_words(use_text_flow=True, x_tolerance=7)
+            # get all chars on the page
+            page_chars: list[dict] = pdf_page.chars
 
-            # skipping pages with no words
-            if not page_words:
+            # skipping pages with no chars
+            if not page_chars:
                 continue
 
-            # adding page no to each word
-            page_words: list[dict] = [{'page_no': page_no, **word} for word in page_words]
             # add words from the page to the list of all words in the pdf
-            all_pdf_words.extend(page_words)
+            all_pdf_chars.extend(page_chars)
 
-    # join all words in the pdf to get the query string
-    query: str = ' '.join([w['text'] for w in all_pdf_words])
+    # join all chars in the pdf to get the query string
+    query: str = ''.join([c['text'] for c in all_pdf_chars])
 
     # get index of words that indicate the start of the session content
-    results_start: dict = edlib.align(start_of_session, query, task="path", mode="HW")
+    results_start: dict = edlib.align(
+        start_of_session,
+        query,
+        task="path",
+        mode="HW",
+        additionalEqualities=ADDIDIONAL_EQUALITIES
+    )
     idx_from: int = results_start['locations'][0][-1]
     # get index of words that indicate the start of the session content
-    results_end: dict = edlib.align(end_of_session, query, task="path", mode="HW")
+    results_end: dict = edlib.align(
+        end_of_session,
+        query,
+        task="path",
+        mode="HW",
+        additionalEqualities=ADDIDIONAL_EQUALITIES
+    )
     idx_to: int = results_end['locations'][-1][-1]
+    last_page = all_pdf_chars[idx_to]['page_number']
 
-    # get the last page of the session content
-    idx: int = 0
-    last_page_of_content: int = 0
-    for word in all_pdf_words:
-        if idx_from <= idx <= idx_to:
-            last_page_of_content = word['page_no']
-        idx += len(word['text']) + 1
+    # get only the words that are part of the session content
+    all_pdf_chars = all_pdf_chars[idx_from:]
+    all_pdf_chars = [char for char in all_pdf_chars if char['page_number'] <= last_page]
+    # remove spaces from the chars (better alignment and search)
+    all_pdf_chars = [char for char in all_pdf_chars if not char['text'].isspace()]
 
-    # filter words that are in between the start and end of the session content
-    # or are on the last page of the session content
-    # we do this to remove the header at the start of the pdf and noise at the end of the pdf
-    pdf_words_wanted: list = []
-    idx: int = 0
-    for word in all_pdf_words:
-        if idx_from <= idx <= idx_to or last_page_of_content == word['page_no']:
-            last_page_of_content = word['page_no']
-            pdf_words_wanted.append(word)
-
-        idx += len(word['text']) + 1
-
-    return pdf_words_wanted
+    return all_pdf_chars
 
 
 def get_len_of_next_n_words(query: str, idx: int, n: int) -> int:
@@ -265,47 +279,168 @@ def get_start_and_end_note(notes_ET: list[ET.Element]) -> tuple[str, str]:
     return session_start_note, session_end_note
 
 
-def add_coordinates_to_xml(idx_start: int, idx_end: int, pdf_words: list[dict], sentence: ET.Element,
-                           has_title: bool = False):
+def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
     # get xml elements (words and punctuations) from sentence element
     elements_in_sentence: list[ET.Element] = [child for child in sentence]
 
-    # get data about words from the pdf
-    mathing_words: list[dict] = []
-    idx: int = 0
-    for word in pdf_words:
-        if idx_start <= idx <= idx_end:
-            mathing_words.append(word)
-        if idx > idx_end:
-            break
-        idx += len(word['text']) + 1
+    query: str = ''.join([char['text'] for char in pdf_chars])
+    query = re.sub(r'\s+', '', query)
 
-    # add coordinate to the xml element
-    query: str = ' '.join([w['text'] for w in mathing_words])
+    #limit_search: bool = any([c in CAHRS_THAT_INDICATE_NEW_LINE for c in query]) or \
+    #                     any([abs(c['bottom'] - pdf_chars[i + 1]['bottom']) >= 300 for i, c in
+    #                          enumerate(pdf_chars[:-1])])
 
     best_match_end: int = 0
+    result = None
 
-    result = {'locations': []}
-
-    # check if any of the words in the sentence can be a title based on the top coordinate
-    if has_title:
-        can_have_title: bool = any([True if word['top'] <= 150 else False for word in mathing_words])
-    else:
-        can_have_title: bool = False
-
-    print("QUERY:", query)
-
+    # print("QUERY:", query)
+    # is_first: bool = True
     search_from: int = 0
     while elements_in_sentence:
         # get element from the sentence and get the target text
         element: ET.Element = elements_in_sentence.pop(0)
-        target: str = element.text
+        target: str = re.sub(r'\s+', '', element.text)
 
         similarity_curr: float = 0
         similarity_prev: float = -1
-        BUFFER: int = 0
+        BUFFER: int = 5
 
-        while similarity_prev < similarity_curr:
+        while similarity_prev < similarity_curr < 1.0:
+            search_area_start = best_match_end
+            search_area_end = search_area_start + len(target) + BUFFER
+
+            #if limit_search:
+            #    if is_first:
+            #        search_area_end = search_area_start + len(target)
+            #    query_limited: str = query[search_area_start:search_area_end]
+            #    is_first = False
+            #else:
+            #    query_limited: str = query[search_area_start:]
+
+            query_limited: str = query[search_area_start:search_area_end]
+
+
+            # getting best match indexes
+            # and adding idx_search_start to them, because we limited the search area
+            result = edlib.align(
+                target,
+                query_limited,
+                task="path",
+                mode='HW',
+                additionalEqualities=ADDIDIONAL_EQUALITIES
+            )
+
+            similarity_prev = similarity_curr
+            similarity_curr = 1 - result['editDistance'] / len(target)
+
+            BUFFER += 2
+
+        locations = result['locations']
+        if result['locations'][0][0] == None:
+            continue
+
+        best_match_start = search_from + locations[0][0]
+        best_match_end = search_from + locations[0][-1]
+
+        similarity = 1 - result['editDistance'] / len(target)
+
+        print('TARGET:', target, '|', 'BEST MATCH:', query[best_match_start: best_match_end + 1], '|', 'SIMILARITY:',
+              similarity, '|', 'SEARCH FROM:', search_from)
+
+        search_from = best_match_end if best_match_end != search_from else best_match_end + 1
+
+        # get coordinates for target text and add them to the xml element
+        coord_counter: int = 0
+        for i, char in enumerate(pdf_chars):
+            if i == best_match_start:
+                element.set(f'x{coord_counter}', str(round(char['x0'], 2)))
+                element.set(f'y{coord_counter}', str(round(char['top'], 2)))
+                element.set('fromPage', str(char['page_number'] - 1))
+                element.set('isBroken', 'false')
+                coord_counter += 1
+
+            if best_match_start <= i < best_match_end and \
+                    i + 1 < len(pdf_chars) and \
+                    abs(int(char['bottom']) - int(pdf_chars[i + 1]['bottom'])) >= 4:
+                # end of previous part of the word
+                element.set(f'x{coord_counter}', str(round(char['x1'], 2)))
+                element.set(f'y{coord_counter}', str(round(char['bottom'], 2)))
+                coord_counter += 1
+                # start of new part of the word
+                element.set(f'x{coord_counter}', str(round(pdf_chars[i + 1]['x0'], 2)))
+                element.set(f'y{coord_counter}', str(round(pdf_chars[i + 1]['top'], 2)))
+                coord_counter += 1
+
+                element.set('isBroken', 'true')
+
+            if i == best_match_end:
+                element.set(f'x{coord_counter}', str(round(char['x1'], 2)))
+                element.set(f'y{coord_counter}', str(round(char['bottom'], 2)))
+                element.set('toPage', str(char['page_number'] - 1))
+
+            if i > best_match_end:
+                break
+
+    print()
+
+
+def remove_pdf_chars(pdf_chars: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
+    # removes chars from idx_start to idx_end
+    print('\nREMOVING TITLES:')
+    new_pdf_chars: list[dict] = []
+    w = ''
+    for i, char in enumerate(pdf_chars):
+        if any([position[0] <= i < position[1] for position in positions]):
+            w += char['text']
+        else:
+            if w:
+                print(w)
+                w = ''
+            new_pdf_chars.append(char)
+
+    return new_pdf_chars
+
+
+def get_bbxs(pdf_chars: list[dict], idx_start: int, idx_end: int) -> list[tuple[int, float, float, float, float]]:
+    # getting data for the bounding box for the target sentence
+    bbxs: list[tuple[int, float, float, float, float]] = []
+    for i, char in enumerate(pdf_chars):
+        if idx_start <= i <= idx_end:
+            page_no = char['page_number']
+            x0 = round(char['x0'], 2)
+            y0 = round(char['top'], 2)
+            x1 = round(char['x1'], 2)
+            y1 = round(char['bottom'], 2)
+            bbxs.append((page_no - 1, x0, y0, x1, y1))
+
+        if i >= idx_end:
+            break
+
+    return bbxs
+
+
+def search_for_words_limited(pdf_chars: list[dict], elements_ET: list[ET.Element]) -> \
+        list[tuple[int, float, float, float, float]]:
+    bbxs: list[tuple[int, float, float, float, float]] = []
+
+    query: str = ''.join([char['text'] for char in pdf_chars])
+    query = re.sub(r'\s+', '', query)
+
+    result = None
+    best_match_end: int = 0
+
+    while elements_ET:
+        # get element as string
+        element_ET: ET.Element = elements_ET.pop(0)
+        target: str = get_text_from_element(element_ET)
+        target = re.sub(r'\s+', '', target)
+
+        similarity_curr: float = 0
+        similarity_prev: float = -1
+        BUFFER: int = 5
+
+        while similarity_prev < similarity_curr < 1.0:
+            # adjust searching area while searching for the target sentence
             search_area_start = best_match_end
             search_area_end = search_area_start + len(target) + BUFFER
 
@@ -313,166 +448,23 @@ def add_coordinates_to_xml(idx_start: int, idx_end: int, pdf_words: list[dict], 
 
             # getting best match indexes
             # and adding idx_search_start to them, because we limited the search area
-            result = edlib.align(target, query_limited, task="path", mode='HW')
+            result = edlib.align(
+                target,
+                query_limited,
+                task="path",
+                mode='HW',
+                additionalEqualities=ADDIDIONAL_EQUALITIES
+            )
 
             similarity_prev = similarity_curr
             similarity_curr = 1 - result['editDistance'] / len(target)
+            BUFFER += 3
 
-            if not can_have_title:
-                BUFFER += 4
-            else:
-                BUFFER += 10
-
-        if result['locations'][0][0] == None or result['locations'][0] == (0, -1):
-            continue
-
-        locations = result['locations']
-        best_match_start = search_from + locations[0][0]
-        best_match_end = search_from + locations[0][-1] + 1
-
-        similarity = 1 - result['editDistance'] / len(target)
-
-        print('TARGET:', target, '|', 'BEST MATCH:', query[best_match_start: best_match_end], '|', 'SIMILARITY:',
-              similarity)
-
-        search_from = best_match_end
-
-        # get coordinates for target text and add them to the xml element
-        idx: int = 0
-        for word in mathing_words:
-            if best_match_start <= idx <= best_match_end and 'isBroken' not in element.attrib:
-                element.set('x0', str(round(word['x0'], 2)))
-                element.set('y0', str(round(word['top'], 2)))
-                element.set('x1', str(round(word['x1'], 2)))
-                element.set('y1', str(round(word['bottom'], 2)))
-                element.set('fromPage', str(word['page_no']))
-                element.set('toPage', str(word['page_no']))
-                element.set('isBroken', 'false')
-            elif best_match_start <= idx <= best_match_end and 'isBroken' in element.attrib:
-                element.set('x2', str(round(word['x0'], 2)))
-                element.set('y2', str(round(word['top'], 2)))
-                element.set('x3', str(round(word['x1'], 2)))
-                element.set('y3', str(round(word['bottom'], 2)))
-                element.set('toPage', str(word['page_no']))
-                element.set('isBroken', 'true')
-
-            if idx > best_match_end:
-                break
-
-            idx += len(word['text']) + 1
-
-    print()
-
-
-def remove_from_pdf_words(pdf_words: list[dict], idx_start: int, idx_end: int) -> list[dict]:
-    # removes words from idx_start to idx_end
-    new_pdf_words: list[dict] = []
-    idx: int = 0
-    for i, word in enumerate(pdf_words):
-        if idx_start <= idx <= idx_end:
-            # print(word['text'])
-            ...
-        else:
-            new_pdf_words.append(word)
-
-        idx += len(word['text']) + 1
-
-    # print()
-
-    return new_pdf_words
-
-
-def remove_from_pdf_words1(pdf_words: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
-    # removes words from idx_start to idx_end
-    new_pdf_words: list[dict] = []
-    idx: int = 0
-    for i, word in enumerate(pdf_words):
-        if any([position[0] <= idx <= position[1] for position in positions]):
-            print(word['text'])
-        else:
-            new_pdf_words.append(word)
-
-        idx += len(word['text']) + 1
-
-    return new_pdf_words
-
-
-def keep_in_pdf_words(pdf_words: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
-    # keeps words from idx_start to idx_end
-    new_pdf_words: list[dict] = []
-    idx: int = 0
-    for i, word in enumerate(pdf_words):
-
-        # keep only words which positions are in the positions list
-        if any([position[0] <= idx <= position[1] for position in positions]):
-            new_pdf_words.append(word)
-        else:
-            print(word['text'])
-
-        idx += len(word['text']) + 1
-
-    return new_pdf_words
-
-
-def get_bbxs(pdf_words: list[dict], idx_start: int, idx_end: int) -> list[tuple[int, float, float, float, float]]:
-    # getting data for the bounding box for the target sentence
-    bbxs: list[tuple[int, float, float, float, float]] = []
-    idx = 0
-    for word in pdf_words:
-        if idx_start <= idx <= idx_end:
-            page_no = word['page_no']
-            x0 = round(word['x0'], 2)
-            y0 = round(word['top'], 2)
-            x1 = round(word['x1'], 2)
-            y1 = round(word['bottom'], 2)
-            bbxs.append((page_no, x0, y0, x1, y1))
-        if idx > idx_end:
-            break
-        idx += len(word['text']) + 1
-
-    return bbxs
-
-
-def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element]) -> \
-        list[tuple[int, float, float, float, float]]:
-    bbxs: list[tuple[int, float, float, float, float]] = []
-
-    query: str = ' '.join([w['text'] for w in pdf_words])
-
-    result = edlib.align(get_text_from_element(elements_ET[0]), query, task="path", mode="HW")
-    best_match_end: int = 0
-
-    while elements_ET:
-        # get element as string
-        element_ET: ET.Element = elements_ET.pop(0)
-        target: str = get_text_from_element(element_ET)
-
-        similarity_curr: float = 0
-        similarity_prev: float = -1
-        BUFFER: int = 3
-
-        while similarity_prev < similarity_curr:
-            # adjust searching area while searching for the target sentence
-            search_area_start = best_match_end
-            search_area_end = search_area_start + len(target) + get_len_of_next_n_words(query,
-                                                                                        search_area_start,
-                                                                                        BUFFER)
-
-            query_limited: str = query[search_area_start:search_area_end]
-
-            # getting best match indexes
-            # and adding idx_search_start to them, because we limited the search area
-            result = edlib.align(target, query_limited, task="path", mode='HW')
-
-            similarity_prev = similarity_curr
-            similarity_curr = 1 - result['editDistance'] / len(target)
-            BUFFER += 2
-
-            # print(similarity_curr)
+            print(similarity_curr)
             # print(search_area_start, search_area_end)
-            # print(query_limited)
-            # print(target)
-            # print()
+            print('QUERY:', query_limited)
+            print('TARGER:', target)
+            print()
 
         # print(target)
         # print(similarity_curr)
@@ -482,7 +474,8 @@ def search_for_words_limited(pdf_words: list[dict], elements_ET: list[ET.Element
         best_match_end: int = search_area_start + result['locations'][0][-1]
 
         if element_ET.tag != '{http://www.tei-c.org/ns/1.0}note':
-            bbxs.extend(get_bbxs(pdf_words, best_match_start, best_match_end))
+            bbxs.extend(get_bbxs(pdf_chars, best_match_start, best_match_end))
+            add_coordinates_to_xml(pdf_chars[best_match_start - 1:best_match_end + 1], element_ET)
 
         # stop when reaching the end of the session content
         if best_match_end == len(query) - 1:
@@ -578,48 +571,34 @@ def get_locations_to_remove(s: str, min_length: int) -> list[tuple[int, int]]:
     return sequences
 
 
-def align(pdf_words: list[dict], elements_ET: list[ET.Element]) -> list[dict]:
+def align(pdf_chars: list[dict], elements_ET: list[ET.Element], min_length: int) -> list[dict]:
     """
     Purpose of this function is to make texts from pdf and xml as similar as possible by removing
     any text from the pdf that is not in the xml, therefore making the alignment of the texts easier.
 
-    :param pdf_words:
+    :param pdf_chars:
     :param elements_ET:
     :return:
     """
-    words = []
-    for sentence in elements_ET:
-        if sentence.tag == '{http://www.tei-c.org/ns/1.0}note':
-            words.append(sentence)
-        else:
-            words.extend([child for child in sentence])
 
-    target: str = ''.join([get_text_from_element(word) for word in words])
+    target: str = ''.join([get_text_from_element(element_ET) for element_ET in elements_ET])
     target = re.sub(r'\s+', '', target)
 
     # all words from pdf concatenated into  query
-    query: str = ''.join([w['text'] for w in pdf_words])
+    query: str = ''.join([w['text'] for w in pdf_chars])
     query = re.sub(r'\s+', '', query)
-
-    # print(target)
-
-    # print(query)
-
-    # print()
 
     result = edlib.align(target, query, task="path", mode="NW")
     nice = edlib.getNiceAlignment(result, target, query)
 
-    locations = get_locations_to_remove(nice['matched_aligned'], 10)
+    # remove the chars from the pdf that are not in the xml based on the locations
+    locations = get_locations_to_remove(nice['matched_aligned'], min_length)
+    # TODO: mby nadle case when too many chars get removed (exceptions_test, no. 270 is the problem)
+    pdf_chars = remove_pdf_chars(pdf_chars, locations)
 
-    for s, e in locations:
-        print(s, e)
-        print(query[s:e])
-        print()
+    print(len(target), len(query), len(nice['matched_aligned']))
 
-    sys.exit()
-
-    return pdf_words
+    return pdf_chars
 
 
 def main():
@@ -629,7 +608,7 @@ def main():
     script_reader: ScriptReader = ScriptReader(
         './exceptions_test/xml',
         './exceptions_test/pdf',
-        _idx=250
+        _from=330
     )
 
     SUCCESSFUL: int = 0
@@ -644,6 +623,8 @@ def main():
         notes_ET: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG)
         # get session start and end notes (to remove header and noise at the end)
         session_start_note, session_end_note = get_start_and_end_note(notes_ET)
+        session_start_note = re.sub(r'\s+', '', session_start_note)
+        session_end_note = re.sub(r'\s+', '', session_end_note)
 
         # kepp only et elements that are after first ger time note
         notes_ET_time: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG, attributes=[
@@ -652,12 +633,18 @@ def main():
         ])
         sentences_ET1: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
         i_from = sentences_ET1.index(notes_ET_time[0])
-        sentences_ET1 = sentences_ET1[i_from + 1:]
+        # TODO: handle the sentences based on the layout
+        sentences_ET1 = sentences_ET1[i_from + 2:]
         sentences_ET2: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
         sentences_ET2 = sentences_ET2[i_from + 2:]
 
-        pdf_words1 = get_words_from_pdf(pdf_file_path, session_start_note, session_end_note)
-        pdf_words2 = align(pdf_words1[:], sentences_ET2)
+        # get all chars from the pdf
+        pdf_chars = align(
+            get_chars_from_pdf(pdf_file_path, session_start_note, session_end_note), sentences_ET1,
+            0
+        )
+        pdf_chars1 = pdf_chars[:]
+        pdf_chars2 = pdf_chars[:]
 
         try:
             raise Exception('Test')
@@ -671,7 +658,7 @@ def main():
             print(f'{idx} TRYING HARDER ON: {pdf_file_path}')
 
             try:
-                bbxs = search_for_words_limited(pdf_words2, sentences_ET2)
+                bbxs = search_for_words_limited(pdf_chars2, sentences_ET2)
 
                 print(f'{idx}. WORKS ON: {pdf_file_path}')
                 SUCCESSFUL += 1
@@ -688,11 +675,11 @@ def main():
                 continue
 
         # display the result
-        # xml_editor.save(f'./output')
+        xml_editor.save(f'./output')
         # get the base name of the xml file
-        # file_name = os.path.basename(xml_file_path)
-        # prepare_result1(f'./output/{file_name}', pdf_file_path)
-        prepare_result(xml_file_path, pdf_file_path, bbxs)
+        file_name = os.path.basename(xml_file_path)
+        prepare_result1(f'./output/{file_name}', pdf_file_path)
+        # prepare_result(xml_file_path, pdf_file_path, bbxs)
 
     # print the results
     print(f'SUCCESSFUL: {SUCCESSFUL}')
