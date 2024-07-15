@@ -99,7 +99,8 @@ ADDIDIONAL_EQUALITIES: list[tuple[str, str]] = [
     ('m', 'n'), ('n', 'm'),
     ('>', 'i'),
     ('U', 'a'), ('a', 'U'),
-    ('A', 'a'), ('a', 'A')
+    ('A', 'a'), ('a', 'A'),
+    ('—', '-'), ('-', '—'),
 ]
 
 
@@ -220,6 +221,9 @@ def get_chars_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
         additionalEqualities=ADDIDIONAL_EQUALITIES
     )
     idx_from: int = results_start['locations'][0][-1]
+    first_page = all_pdf_chars[idx_from]['page_number']
+    bottom = all_pdf_chars[idx_from]['bottom']
+
     # get index of words that indicate the start of the session content
     results_end: dict = edlib.align(
         end_of_session,
@@ -232,7 +236,8 @@ def get_chars_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
     last_page = all_pdf_chars[idx_to]['page_number']
 
     # get only the words that are part of the session content
-    all_pdf_chars = all_pdf_chars[idx_from:]
+    all_pdf_chars = [char for char in all_pdf_chars if (char['page_number'] > first_page) or (
+            char['page_number'] == first_page and char['bottom'] > bottom)]
     all_pdf_chars = [char for char in all_pdf_chars if char['page_number'] <= last_page]
     # remove spaces from the chars (better alignment and search)
     all_pdf_chars = [char for char in all_pdf_chars if not char['text'].isspace()]
@@ -240,18 +245,13 @@ def get_chars_from_pdf(pdf_path: str, start_of_session: str, end_of_session: str
     return all_pdf_chars
 
 
-def get_len_of_next_n_words(query: str, idx: int, n: int) -> int:
-    words = query[idx:].split(' ')
-    return sum([len(word) + 1 for word in words[:n]])
+def is_valid(words: list[ET.Element], percentage: float) -> bool:
+    num_of_words_with_coords = 0
+    for word in words:
+        if 'x0' in word.attrib and 'y0' in word.attrib and 'x1' in word.attrib and 'y1' in word.attrib:
+            num_of_words_with_coords += 1
 
-
-def is_last_sentence(sentence: str):
-    # check if the sentence is the last one (to avoid noise in the pdf)
-    for key_word_session_end in SESSION_END_GER:
-        if key_word_session_end.lower() in sentence.lower():
-            return True
-
-    return False
+    return num_of_words_with_coords / len(words) >= percentage
 
 
 def get_start_and_end_note(notes_ET: list[ET.Element]) -> tuple[str, str]:
@@ -286,7 +286,7 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
     query: str = ''.join([char['text'] for char in pdf_chars])
     query = re.sub(r'\s+', '', query)
 
-    #limit_search: bool = any([c in CAHRS_THAT_INDICATE_NEW_LINE for c in query]) or \
+    # limit_search: bool = any([c in CAHRS_THAT_INDICATE_NEW_LINE for c in query]) or \
     #                     any([abs(c['bottom'] - pdf_chars[i + 1]['bottom']) >= 300 for i, c in
     #                          enumerate(pdf_chars[:-1])])
 
@@ -309,16 +309,15 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
             search_area_start = best_match_end
             search_area_end = search_area_start + len(target) + BUFFER
 
-            #if limit_search:
+            # if limit_search:
             #    if is_first:
             #        search_area_end = search_area_start + len(target)
             #    query_limited: str = query[search_area_start:search_area_end]
             #    is_first = False
-            #else:
+            # else:
             #    query_limited: str = query[search_area_start:]
 
             query_limited: str = query[search_area_start:search_area_end]
-
 
             # getting best match indexes
             # and adding idx_search_start to them, because we limited the search area
@@ -336,7 +335,7 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
             BUFFER += 2
 
         locations = result['locations']
-        if result['locations'][0][0] == None:
+        if result['locations'][0][0] is None:
             continue
 
         best_match_start = search_from + locations[0][0]
@@ -344,10 +343,12 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
 
         similarity = 1 - result['editDistance'] / len(target)
 
-        print('TARGET:', target, '|', 'BEST MATCH:', query[best_match_start: best_match_end + 1], '|', 'SIMILARITY:',
-              similarity, '|', 'SEARCH FROM:', search_from)
+        # print('TARGET:', target, '|', 'BEST MATCH:', query[best_match_start: best_match_end + 1], '|', 'SIMILARITY:',
+        #      similarity, '|', 'SEARCH FROM:', search_from, '|', 'BEST MATCH END:', best_match_end)
 
-        search_from = best_match_end if best_match_end != search_from else best_match_end + 1
+        search_from = best_match_end if best_match_end > search_from or \
+                                        (elements_in_sentence and len(
+                                            elements_in_sentence[0].text) > 1) else best_match_end + 1
 
         # get coordinates for target text and add them to the xml element
         coord_counter: int = 0
@@ -359,7 +360,8 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
                 element.set('isBroken', 'false')
                 coord_counter += 1
 
-            if best_match_start <= i < best_match_end and \
+            if best_match_end - best_match_start > 1 and \
+                    best_match_start <= i < best_match_end and \
                     i + 1 < len(pdf_chars) and \
                     abs(int(char['bottom']) - int(pdf_chars[i + 1]['bottom'])) >= 4:
                 # end of previous part of the word
@@ -381,12 +383,12 @@ def add_coordinates_to_xml(pdf_chars: list[dict], sentence: ET.Element):
             if i > best_match_end:
                 break
 
-    print()
+    # print()
 
 
 def remove_pdf_chars(pdf_chars: list[dict], positions: list[tuple[int, int]]) -> list[dict]:
     # removes chars from idx_start to idx_end
-    print('\nREMOVING TITLES:')
+    # print('\nREMOVING TITLES:')
     new_pdf_chars: list[dict] = []
     w = ''
     for i, char in enumerate(pdf_chars):
@@ -394,7 +396,7 @@ def remove_pdf_chars(pdf_chars: list[dict], positions: list[tuple[int, int]]) ->
             w += char['text']
         else:
             if w:
-                print(w)
+                # print(w)
                 w = ''
             new_pdf_chars.append(char)
 
@@ -419,15 +421,14 @@ def get_bbxs(pdf_chars: list[dict], idx_start: int, idx_end: int) -> list[tuple[
     return bbxs
 
 
-def search_for_words_limited(pdf_chars: list[dict], elements_ET: list[ET.Element]) -> \
-        list[tuple[int, float, float, float, float]]:
-    bbxs: list[tuple[int, float, float, float, float]] = []
-
-    query: str = ''.join([char['text'] for char in pdf_chars])
+def search_for_words_limited(pdf_chars: list[dict], elements_ET: list[ET.Element]):
+    query: str = '@' + ''.join([char['text'] for char in pdf_chars])
     query = re.sub(r'\s+', '', query)
 
+    is_first: bool = True
     result = None
     best_match_end: int = 0
+    search_area_start: int = 0
 
     while elements_ET:
         # get element as string
@@ -460,28 +461,31 @@ def search_for_words_limited(pdf_chars: list[dict], elements_ET: list[ET.Element
             similarity_curr = 1 - result['editDistance'] / len(target)
             BUFFER += 3
 
-            print(similarity_curr)
+            # print(similarity_curr)
             # print(search_area_start, search_area_end)
-            print('QUERY:', query_limited)
-            print('TARGER:', target)
-            print()
+            # print('QUERY:', query_limited)
+        # print('TARGER:', target)
+        # print('TAG:', element_ET.tag)
+        # print()
 
         # print(target)
         # print(similarity_curr)
         # print()
 
+        if result['locations'][0][0] is None:
+            continue
+
         best_match_start: int = search_area_start + result['locations'][0][0]
         best_match_end: int = search_area_start + result['locations'][0][-1]
 
-        if element_ET.tag != '{http://www.tei-c.org/ns/1.0}note':
-            bbxs.extend(get_bbxs(pdf_chars, best_match_start, best_match_end))
+        if 'note' not in element_ET.tag:
             add_coordinates_to_xml(pdf_chars[best_match_start - 1:best_match_end + 1], element_ET)
 
         # stop when reaching the end of the session content
         if best_match_end == len(query) - 1:
             break
 
-    return bbxs
+        query = query.replace('@', '')
 
 
 def search_for_words_all(pdf_words: list[dict], sentences_ET: list[ET.Element]) -> \
@@ -593,10 +597,9 @@ def align(pdf_chars: list[dict], elements_ET: list[ET.Element], min_length: int)
 
     # remove the chars from the pdf that are not in the xml based on the locations
     locations = get_locations_to_remove(nice['matched_aligned'], min_length)
-    # TODO: mby nadle case when too many chars get removed (exceptions_test, no. 270 is the problem)
     pdf_chars = remove_pdf_chars(pdf_chars, locations)
 
-    print(len(target), len(query), len(nice['matched_aligned']))
+    # print(len(target), len(query), len(nice['matched_aligned']))
 
     return pdf_chars
 
@@ -606,9 +609,12 @@ def main():
     # shutil.rmtree('./results', ignore_errors=True)
 
     script_reader: ScriptReader = ScriptReader(
-        './exceptions_test/xml',
-        './exceptions_test/pdf',
-        _from=330
+        './all_xml',
+        './all_pdf',
+        # _idx=0
+        _from=382 + 247
+        # _from=70,
+        # _to=100
     )
 
     SUCCESSFUL: int = 0
@@ -627,59 +633,51 @@ def main():
         session_end_note = re.sub(r'\s+', '', session_end_note)
 
         # kepp only et elements that are after first ger time note
-        notes_ET_time: list[ET.Element] = xml_editor.get_elements_by_tags(NOTE_TAG, attributes=[
-            {'type': 'time'},
-            {'{http://www.w3.org/XML/1998/namespace}lang': 'de'},
-        ])
-        sentences_ET1: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
-        i_from = sentences_ET1.index(notes_ET_time[0])
-        # TODO: handle the sentences based on the layout
-        sentences_ET1 = sentences_ET1[i_from + 2:]
-        sentences_ET2: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
-        sentences_ET2 = sentences_ET2[i_from + 2:]
+        sentences_ET: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
+
+        # remove first n notes
+        i_from = 0
+        for i, sentence_ET in enumerate(sentences_ET):
+            if 'note' not in sentence_ET.tag:
+                i_from = i
+                break
+
+        sentences_ET = sentences_ET[i_from:]
 
         # get all chars from the pdf
         pdf_chars = align(
-            get_chars_from_pdf(pdf_file_path, session_start_note, session_end_note), sentences_ET1,
+            get_chars_from_pdf(pdf_file_path, session_start_note, session_end_note), sentences_ET,
             0
         )
-        pdf_chars1 = pdf_chars[:]
-        pdf_chars2 = pdf_chars[:]
 
         try:
-            raise Exception('Test')
-            bbxs = search_for_words_all(pdf_words1, sentences_ET1)
+            search_for_words_limited(pdf_chars, sentences_ET)
+
+            words = xml_editor.get_elements_by_tags(WORD_TAG)
+            words = [word for word in words if word.tag not in NOTE_TAG]
+            if not is_valid(words, 0.85):
+                raise Exception('Not valid')
 
             print(f'{idx}. WORKS ON: {pdf_file_path}')
+
+            # display the result
+            xml_editor.save(f'./output')
+            # get the base name of the xml file
+            file_name = os.path.basename(xml_file_path)
+            prepare_result1(f'./output/{file_name}', pdf_file_path)
+
             SUCCESSFUL += 1
 
         except Exception as e:
 
-            print(f'{idx} TRYING HARDER ON: {pdf_file_path}')
+            print(f'{idx}. DOES NOT WORK ON: {pdf_file_path}')
+            traceback.print_exc()
+            UNSUCCESSFUL += 1
 
-            try:
-                bbxs = search_for_words_limited(pdf_chars2, sentences_ET2)
-
-                print(f'{idx}. WORKS ON: {pdf_file_path}')
-                SUCCESSFUL += 1
-
-            except Exception as e:
-
-                print(f'{idx}. DOES NOT WORK ON: {pdf_file_path}')
-                traceback.print_exc()
-                UNSUCCESSFUL += 1
-
-                # copy the pdf file to the exceptions_test folder
-                shutil.copy(pdf_file_path, f'exceptions/pdf/{os.path.basename(pdf_file_path)}')
-                shutil.copy(xml_file_path, f'exceptions/xml/{os.path.basename(xml_file_path)}')
-                continue
-
-        # display the result
-        xml_editor.save(f'./output')
-        # get the base name of the xml file
-        file_name = os.path.basename(xml_file_path)
-        prepare_result1(f'./output/{file_name}', pdf_file_path)
-        # prepare_result(xml_file_path, pdf_file_path, bbxs)
+            # copy the pdf file to the exceptions_test folder
+            shutil.copy(pdf_file_path, f'exceptions/pdf/{os.path.basename(pdf_file_path)}')
+            shutil.copy(xml_file_path, f'exceptions/xml/{os.path.basename(xml_file_path)}')
+            continue
 
     # print the results
     print(f'SUCCESSFUL: {SUCCESSFUL}')
