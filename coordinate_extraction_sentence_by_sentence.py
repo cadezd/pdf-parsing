@@ -611,8 +611,8 @@ def main():
     script_reader: ScriptReader = ScriptReader(
         './all_xml',
         './all_pdf',
-        # _idx=0
-        _from=382 + 247
+        _idx=0
+        # _from=382 + 247
         # _from=70,
         # _to=100
     )
@@ -636,6 +636,7 @@ def main():
         sentences_ET: list[ET.Element] = xml_editor.get_elements_by_tags(SENTENCE_TAG)
 
         # remove first n notes
+        print(sentences_ET)
         i_from = 0
         for i, sentence_ET in enumerate(sentences_ET):
             if 'note' not in sentence_ET.tag:
