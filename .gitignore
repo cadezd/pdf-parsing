@@ -4,7 +4,9 @@ parsanje/
 pdf/
 testing_pdf/
 testing_xml/
+results/
 xml/
+cache/
 *.pdf
 *.xml
 *.jsonl
